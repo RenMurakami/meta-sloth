@@ -13,3 +13,9 @@ OVERLAYFS_MOUNT_POINT[data] = "/data"
 
 # /data lives on the rootfs only.  Every initramfs image legitimately has no
 # /data mount, so the overlayfs QA check has nothing to verify there.
+
+# The p3768 devkit's RJ45 is a Realtek RTL8168 on PCIe, not the Tegra EQOS
+# (meta-tegra p3768.inc: NVIDIA_ETHERNET = "nv-kernel-module-r8168").
+# meta-tegra only RRECOMMENDS it; require it and autoload it.
+MACHINE_ESSENTIAL_EXTRA_RDEPENDS += "nv-kernel-module-r8168"
+KERNEL_MODULE_AUTOLOAD += "r8168"
