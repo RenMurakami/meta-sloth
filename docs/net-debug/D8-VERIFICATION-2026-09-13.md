@@ -33,6 +33,11 @@ NVMe dual-boot is actually attempted — this was SD-only boot.
 
 ## Gaps found
 
+> **Gaps 1-4 are fixed in commit `79fbba0`** ("close the three D8 gaps in one
+> rebuild"). The fixes are built and package-QA clean but **not yet rebuilt as
+> a full image, flashed, or booted** - every "fixed" note below means the
+> recipe change exists, not that hardware has confirmed it.
+
 ### 1. ~10 GiB of the root partition is unused
 
 `mmcblk0p1` is **14 GiB** (14680064 blocks) but the ext4 inside is **4.0 G,
@@ -47,11 +52,21 @@ payloads small, and a fresh rootfs written to `APP_b` by an OTA grows itself.
 fixed at 14 GiB by the flash XML (`flash_t234_qspi_sd_rootfs_ab.xml`); growfs
 does not move partition edges.
 
+**Fixed** - `recipes-core/base-files/base-files_%.bbappend` adds
+`x-systemd.growfs` to the `/` entry. `IMAGE_ROOTFS_EXTRA_SPACE` also drops
+from 2 GiB to 512 MiB, since padding the image is pointless once it grows at
+boot. To confirm on the next boot: `df -h /` should read ~14 G, and
+`systemctl status systemd-growfs-root` should show it ran once.
+
 ### 2. `resize2fs` is missing despite `e2fsprogs` being installed
 
 Yocto splits `e2fsprogs` into per-tool packages. Need
 `e2fsprogs-resize2fs` (and `e2fsprogs-tune2fs`) explicitly. Until then the
 above cannot even be fixed by hand on the device.
+
+**Fixed** - both added to `IMAGE_INSTALL`. Note this is belt-and-braces:
+`systemd-growfs(8)` resizes ext4 with the `EXT4_IOC_RESIZE_FS` ioctl and never
+calls `resize2fs`, so gap 1 does not depend on gap 2.
 
 ### 3. Passwordless root SSH is open to the whole LAN
 
@@ -64,15 +79,27 @@ Login succeeds with `ssh -o BatchMode=yes` — i.e. **no credential of any
 kind**. Acceptable for bring-up, but it makes the `deer-image-dev` /
 `deer-image` split (session log §8 item 3) a security task, not a tidy-up.
 
+**Fixed** - `deer-image` is now the production image (keys only, via
+`DEER_SSH_AUTHORIZED_KEYS`, which is a hard build error if unset) and
+`deer-image-dev` carries the bring-up features. **Bench work must now build
+`deer-image-dev`**; `deer-image` without a key will not build, by design.
+
 ### 4. No `/usr/local/cuda` symlink
 
 Only `/usr/local/cuda-13.2` exists. Anything defaulting to
 `CUDA_HOME=/usr/local/cuda` will fail.
 
+**Fixed** - the `deer-cuda-env` recipe ships the symlink plus a `profile.d`
+setting `CUDA_HOME`/`CUDA_PATH`.
+
 ### 5. Wi-Fi chip present, no driver
 
 `0001:01:00.0 [10ec:c822]` RTL8822CE is on the bus with no driver installed.
 Expected — not wired up yet, listed so it is not rediscovered as a surprise.
+
+**Still open, deliberately.** Unlike 1-4 this is a decision (which driver and
+firmware package, and whether the product wants Wi-Fi at all), not a defect in
+what already ships.
 
 ## Trap waiting in the `/data` work (D8)
 
