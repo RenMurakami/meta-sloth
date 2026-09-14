@@ -34,9 +34,17 @@ NVMe dual-boot is actually attempted — this was SD-only boot.
 ## Gaps found
 
 > **Gaps 1-4 are fixed in commit `79fbba0`** ("close the three D8 gaps in one
-> rebuild"). The fixes are built and package-QA clean but **not yet rebuilt as
-> a full image, flashed, or booted** - every "fixed" note below means the
-> recipe change exists, not that hardware has confirmed it.
+> rebuild"), and `deer-image-dev` has been rebuilt and its rootfs inspected:
+> `/etc/fstab` carries `defaults,x-systemd.growfs`, `resize2fs`/`tune2fs` are
+> installed, `/usr/local/cuda -> cuda-13.2` resolves to a directory that is
+> really there, and the dev image keeps `PermitRootLogin yes` /
+> `PermitEmptyPasswords yes` / `root::` with no hardening drop-in - so bench
+> SSH is unchanged from this run.
+>
+> **Not booted.** Everything below is confirmed in the built filesystem, not on
+> hardware. The card image is built (`flash/sd/deer-sdcard.img.zst`) but
+> nothing has been written to a microSD: WSL2 has no raw block-device or USB
+> access, so writing the card is a Windows-side step.
 
 ### 1. ~10 GiB of the root partition is unused
 
@@ -67,6 +75,12 @@ What actually shrinks is the `*.rootfs.ext4` artefact - roughly 4.7 G to 3.2 G
 - which is what an OTA ships, so the swupdate half of the claim stands. The
 `.img.zst` shrinks only marginally, because the space removed was empty and
 already compressed to almost nothing.
+
+Measured after the rebuild, which settles it: the rootfs ext4 went
+4 663 996 416 -> 3 053 674 496 bytes (-1.6 G), while `deer-sdcard.img.zst` went
+1 908 098 558 -> 1 910 411 704 bytes - **2.3 MB larger**, because the freed
+space was zeros and the image also gained resize2fs, tune2fs and
+deer-cuda-env. The card still takes the same 31 680 000 000 bytes to write.
 
 ### 2. `resize2fs` is missing despite `e2fsprogs` being installed
 
