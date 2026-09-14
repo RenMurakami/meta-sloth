@@ -58,6 +58,16 @@ from 2 GiB to 512 MiB, since padding the image is pointless once it grows at
 boot. To confirm on the next boot: `df -h /` should read ~14 G, and
 `systemctl status systemd-growfs-root` should show it ran once.
 
+Correction to "keeps `dd` fast" above, and to the message of commit `79fbba0`:
+shrinking `IMAGE_ROOTFS_EXTRA_SPACE` does **not** speed up writing the card.
+`deer-sdcard.img` is a whole-disk image fixed at 32 G by `dosdcard.sh -s 32G`,
+and APP/APP_b are 14 GiB each regardless (`<size> 15032385536 </size>` in
+`flash.xml.in`), so the bytes written to the card are the same either way.
+What actually shrinks is the `*.rootfs.ext4` artefact - roughly 4.7 G to 3.2 G
+- which is what an OTA ships, so the swupdate half of the claim stands. The
+`.img.zst` shrinks only marginally, because the space removed was empty and
+already compressed to almost nothing.
+
 ### 2. `resize2fs` is missing despite `e2fsprogs` being installed
 
 Yocto splits `e2fsprogs` into per-tool packages. Need
