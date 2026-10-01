@@ -95,3 +95,14 @@ IMAGE_ROOTFS_EXTRA_SPACE = "524288"
 
 # TODO(M2): replace with a real /data mount (systemd-repart + data.mount)
 OVERLAYFS_QA_SKIP[data] = "mount-configured"
+
+# --- /usr/local/cuda -> /usr/local/cuda-<ver> ----------------------------
+# meta-tegra installs only the versioned dir; CUDA_HOME-based builds need this.
+deer_cuda_symlink() {
+    for d in ${IMAGE_ROOTFS}${prefix}/local/cuda-*; do
+        [ -d "$d" ] || continue
+        ln -sfn "$(basename $d)" ${IMAGE_ROOTFS}${prefix}/local/cuda
+        break
+    done
+}
+ROOTFS_POSTPROCESS_COMMAND += "deer_cuda_symlink;"
