@@ -1,0 +1,32 @@
+# This layer is added to a tegra-demo-distro tree from outside it, so no build
+# output should ever land here.  These entries catch the accidents.
+
+# Build output, if a build is ever pointed inside the layer by mistake
+build*/
+tmp/
+sstate-cache/
+downloads/
+deploy/
+
+# Editor / OS noise
+.vscode/
+.idea/
+*.swp
+*~
+.DS_Store
+
+# Python
+__pycache__/
+*.pyc
+
+# Secrets - never.  Note that deer-authorized_keys is a PUBLIC key and lives in
+# the build tree (~/yocto), referenced by DEER_SSH_AUTHORIZED_KEYS in local.conf,
+# not in this layer.
+*.key
+*.pem
+id_rsa
+id_ed25519
+.env
+
+# On-device reports produced by docs/net-debug/deer-net-debug.sh
+deer-net-debug.txt
