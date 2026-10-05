@@ -1,4 +1,4 @@
-SUMMARY = "/usr/local/cuda compatibility symlink and CUDA_HOME for the deer image"
+SUMMARY = "/usr/local/cuda compatibility symlink and CUDA_HOME for the sloth image"
 DESCRIPTION = "meta-tegra installs the toolkit only under /usr/local/cuda-${CUDA_VERSION}. \
 Anything that defaults to CUDA_HOME=/usr/local/cuda - CMake's FindCUDAToolkit, \
 PyTorch, most NVIDIA sample build systems - fails on a stock image. \
@@ -18,7 +18,7 @@ do_install() {
     ln -snf cuda-${CUDA_VERSION} ${D}${prefix}/local/cuda
 
     install -d ${D}${sysconfdir}/profile.d
-    cat > ${D}${sysconfdir}/profile.d/deer-cuda.sh <<'PROFILE'
+    cat > ${D}${sysconfdir}/profile.d/sloth-cuda.sh <<'PROFILE'
 # CUDA toolkit location for interactive shells.  /usr/local/cuda is a symlink
 # to the versioned directory, so this survives a toolkit upgrade.
 export CUDA_HOME=/usr/local/cuda
@@ -29,10 +29,10 @@ if [ -d /usr/local/cuda/bin ]; then
     export PATH="$PATH:/usr/local/cuda/bin"
 fi
 PROFILE
-    chmod 0644 ${D}${sysconfdir}/profile.d/deer-cuda.sh
+    chmod 0644 ${D}${sysconfdir}/profile.d/sloth-cuda.sh
 }
 
-FILES:${PN} = "${prefix}/local/cuda ${sysconfdir}/profile.d/deer-cuda.sh"
+FILES:${PN} = "${prefix}/local/cuda ${sysconfdir}/profile.d/sloth-cuda.sh"
 
 # The symlink is dangling unless the toolkit it points at is in the image.
 RDEPENDS:${PN} = "cuda-cudart"

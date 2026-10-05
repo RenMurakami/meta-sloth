@@ -1,10 +1,14 @@
 # D8 verification run — 2026-09-13
 
+> Recorded before the project was renamed from **deer** to **sloth** (2026-10-04).
+> Names in this file were updated; the boards and builds it describes ran as
+> `deer-orin-nano-sd` / `deer-image` / `meta-deer`.
+
 First session with working SSH (`root@192.168.1.128`), so every check below was
 run remotely instead of typed on the HDMI console. Clears the whole
 "未確認" list from `session-log-2026-09-09.md` §7.
 
-> Note: the deer image now answers on **192.168.1.128** (the address JetPack
+> Note: the sloth image now answers on **192.168.1.128** (the address JetPack
 > used to hold). Same NIC MAC, same DHCP lease. `ssh-keygen -R 192.168.1.128`
 > is needed once per client because the host key differs from JetPack's.
 
@@ -34,7 +38,7 @@ NVMe dual-boot is actually attempted — this was SD-only boot.
 ## Gaps found
 
 > **Gaps 1-4 are fixed in commit `79fbba0`** ("close the three D8 gaps in one
-> rebuild"), and `deer-image-dev` has been rebuilt and its rootfs inspected:
+> rebuild"), and `sloth-image-dev` has been rebuilt and its rootfs inspected:
 > `/etc/fstab` carries `defaults,x-systemd.growfs`, `resize2fs`/`tune2fs` are
 > installed, `/usr/local/cuda -> cuda-13.2` resolves to a directory that is
 > really there, and the dev image keeps `PermitRootLogin yes` /
@@ -42,7 +46,7 @@ NVMe dual-boot is actually attempted — this was SD-only boot.
 > SSH is unchanged from this run.
 >
 > **Not booted.** Everything below is confirmed in the built filesystem, not on
-> hardware. The card image is built (`flash/sd/deer-sdcard.img.zst`) but
+> hardware. The card image is built (`flash/sd/sloth-sdcard.img.zst`) but
 > nothing has been written to a microSD: WSL2 has no raw block-device or USB
 > access, so writing the card is a Windows-side step.
 
@@ -68,7 +72,7 @@ boot. To confirm on the next boot: `df -h /` should read ~14 G, and
 
 Correction to "keeps `dd` fast" above, and to the message of commit `79fbba0`:
 shrinking `IMAGE_ROOTFS_EXTRA_SPACE` does **not** speed up writing the card.
-`deer-sdcard.img` is a whole-disk image fixed at 32 G by `dosdcard.sh -s 32G`,
+`sloth-sdcard.img` is a whole-disk image fixed at 32 G by `dosdcard.sh -s 32G`,
 and APP/APP_b are 14 GiB each regardless (`<size> 15032385536 </size>` in
 `flash.xml.in`), so the bytes written to the card are the same either way.
 What actually shrinks is the `*.rootfs.ext4` artefact - roughly 4.7 G to 3.2 G
@@ -77,10 +81,10 @@ What actually shrinks is the `*.rootfs.ext4` artefact - roughly 4.7 G to 3.2 G
 already compressed to almost nothing.
 
 Measured after the rebuild, which settles it: the rootfs ext4 went
-4 663 996 416 -> 3 053 674 496 bytes (-1.6 G), while `deer-sdcard.img.zst` went
+4 663 996 416 -> 3 053 674 496 bytes (-1.6 G), while `sloth-sdcard.img.zst` went
 1 908 098 558 -> 1 910 411 704 bytes - **2.3 MB larger**, because the freed
 space was zeros and the image also gained resize2fs, tune2fs and
-deer-cuda-env. The card still takes the same 31 680 000 000 bytes to write.
+sloth-cuda-env. The card still takes the same 31 680 000 000 bytes to write.
 
 ### 2. `resize2fs` is missing despite `e2fsprogs` being installed
 
@@ -100,20 +104,20 @@ PermitEmptyPasswords yes
 ```
 
 Login succeeds with `ssh -o BatchMode=yes` — i.e. **no credential of any
-kind**. Acceptable for bring-up, but it makes the `deer-image-dev` /
-`deer-image` split (session log §8 item 3) a security task, not a tidy-up.
+kind**. Acceptable for bring-up, but it makes the `sloth-image-dev` /
+`sloth-image` split (session log §8 item 3) a security task, not a tidy-up.
 
-**Fixed** - `deer-image` is now the production image (keys only, via
-`DEER_SSH_AUTHORIZED_KEYS`, which is a hard build error if unset) and
-`deer-image-dev` carries the bring-up features. **Bench work must now build
-`deer-image-dev`**; `deer-image` without a key will not build, by design.
+**Fixed** - `sloth-image` is now the production image (keys only, via
+`SLOTH_SSH_AUTHORIZED_KEYS`, which is a hard build error if unset) and
+`sloth-image-dev` carries the bring-up features. **Bench work must now build
+`sloth-image-dev`**; `sloth-image` without a key will not build, by design.
 
 ### 4. No `/usr/local/cuda` symlink
 
 Only `/usr/local/cuda-13.2` exists. Anything defaulting to
 `CUDA_HOME=/usr/local/cuda` will fail.
 
-**Fixed** - the `deer-cuda-env` recipe ships the symlink plus a `profile.d`
+**Fixed** - the `sloth-cuda-env` recipe ships the symlink plus a `profile.d`
 setting `CUDA_HOME`/`CUDA_PATH`.
 
 ### 5. Wi-Fi chip present, no driver

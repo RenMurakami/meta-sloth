@@ -1,10 +1,10 @@
 #!/bin/sh
-# deer-net-debug.sh - collect network bring-up evidence on the Yocto (deer) image.
+# sloth-net-debug.sh - collect network bring-up evidence on the Yocto (sloth) image.
 #
-# Run ON THE JETSON, booted into the deer image:
-#     sh /path/to/deer-net-debug.sh
+# Run ON THE JETSON, booted into the sloth image:
+#     sh /path/to/sloth-net-debug.sh
 #
-# It writes /tmp/deer-net-debug.txt and, if the UDA partition is present,
+# It writes /tmp/sloth-net-debug.txt and, if the UDA partition is present,
 # copies the report to the SD card so it can be read later from JetPack or WSL
 # without retyping anything from the screen.
 #
@@ -14,7 +14,7 @@
 # MGBE (ethernet@6800000) nodes are legitimately "disabled" on this board, so
 # nvethernet is the wrong driver to chase.
 
-OUT=/tmp/deer-net-debug.txt
+OUT=/tmp/sloth-net-debug.txt
 KREL=$(uname -r)
 
 exec 3>&1
@@ -22,7 +22,7 @@ exec >"$OUT" 2>&1
 
 sec() { echo; echo "==================== $* ===================="; }
 
-echo "deer-net-debug  $(date -u 2>/dev/null)  kernel=$KREL"
+echo "sloth-net-debug  $(date -u 2>/dev/null)  kernel=$KREL"
 
 sec "1. identity / rootfs (is this really the SD?)"
 cat /etc/os-release 2>/dev/null
@@ -95,7 +95,7 @@ for p in /dev/mmcblk0p15 /dev/mmcblk0p14; do
     [ -b "$p" ] || continue
     mkdir -p /mnt/uda 2>/dev/null
     if mount "$p" /mnt/uda 2>/dev/null; then
-        cp "$OUT" /mnt/uda/ 2>/dev/null && echo "copy saved to $p:/deer-net-debug.txt"
+        cp "$OUT" /mnt/uda/ 2>/dev/null && echo "copy saved to $p:/sloth-net-debug.txt"
         sync; umount /mnt/uda 2>/dev/null
         break
     fi
@@ -103,4 +103,4 @@ done
 
 echo
 echo "Next: read it here with 'less $OUT', or reboot to JetPack and run:"
-echo "  sudo mount /dev/mmcblk0p15 /mnt && cat /mnt/deer-net-debug.txt"
+echo "  sudo mount /dev/mmcblk0p15 /mnt && cat /mnt/sloth-net-debug.txt"

@@ -1,4 +1,8 @@
-# Network fix for `deer-image` — what was added to `meta-deer`
+# Network fix for `sloth-image` — what was added to `meta-sloth`
+
+> Recorded before the project was renamed from **deer** to **sloth** (2026-10-04).
+> Names in this file were updated; the boards and builds it describes ran as
+> `deer-orin-nano-sd` / `deer-image` / `meta-deer`.
 
 > **Status: APPLIED.** Landed as commit `e164021` and verified on hardware
 > 2026-09-13. Kept as the record of *why* each piece exists.
@@ -31,7 +35,7 @@ so even with the driver loaded there is no DHCP client and no IP. That is why
 
 ## What was applied
 
-`conf/machine/include/deer-orin-nano-common.inc`:
+`conf/machine/include/sloth-orin-nano-common.inc`:
 
 ```bitbake
 # The p3768 devkit's RJ45 is a Realtek RTL8168 on PCIe, not the Tegra EQOS
@@ -41,7 +45,7 @@ MACHINE_ESSENTIAL_EXTRA_RDEPENDS += "nv-kernel-module-r8168"
 KERNEL_MODULE_AUTOLOAD += "r8168"
 ```
 
-`recipes-core/deer-network/files/20-wired.network`:
+`recipes-core/sloth-network/files/20-wired.network`:
 
 ```ini
 [Match]
@@ -54,9 +58,9 @@ DHCP=yes
 UseDNS=yes
 ```
 
-`recipes-core/deer-network/deer-network_1.0.bb` installs it into
-`${systemd_unitdir}/network`, and `deer-image.bb` pulls in `kernel-modules`,
-`nv-kernel-module-r8168` and `deer-network`.
+`recipes-core/sloth-network/sloth-network_1.0.bb` installs it into
+`${systemd_unitdir}/network`, and `sloth-image.bb` pulls in `kernel-modules`,
+`nv-kernel-module-r8168` and `sloth-network`.
 
 `can0` joins here in M3:
 
@@ -70,22 +74,22 @@ UseDNS=yes
 
 ```bash
 cd /work/tegra-demo-distro/build-sd
-M=tmp/deploy/images/deer-orin-nano-sd/deer-image-deer-orin-nano-sd.rootfs.manifest
-grep -E "r8168|realtek|rtl8168|deer-network" $M      # driver + config present
+M=tmp/deploy/images/sloth-orin-nano-sd/sloth-image-sloth-orin-nano-sd.rootfs.manifest
+grep -E "r8168|realtek|rtl8168|sloth-network" $M      # driver + config present
 grep -c . $M                                          # package count
 ```
 
 Then rebuild the SD image exactly as in the runbook §7/§10:
 
 ```bash
-cd /work/flash/sd && rm -f deer-sdcard.img deer-sdcard.img.zst
-tar xf /work/tegra-demo-distro/build-sd/tmp/deploy/images/deer-orin-nano-sd/deer-image-deer-orin-nano-sd.rootfs.tegraflash-tar.zst
-./dosdcard.sh -s 32G deer-sdcard.img && zstd -T0 -3 deer-sdcard.img -o deer-sdcard.img.zst
+cd /work/flash/sd && rm -f sloth-sdcard.img sloth-sdcard.img.zst
+tar xf /work/tegra-demo-distro/build-sd/tmp/deploy/images/sloth-orin-nano-sd/sloth-image-sloth-orin-nano-sd.rootfs.tegraflash-tar.zst
+./dosdcard.sh -s 32G sloth-sdcard.img && zstd -T0 -3 sloth-sdcard.img -o sloth-sdcard.img.zst
 ```
 
 ## If the interface ever stops appearing
 
 Then the driver is not the issue — PCIe enumeration is. Run
-`deer-net-debug.sh` on the device and look at section 2 (`lspci`): if no
+`sloth-net-debug.sh` on the device and look at section 2 (`lspci`): if no
 `10ec:` device is listed, the NIC is not on the bus at all, which points at the
 PCIe controller node in the DTB rather than at the Ethernet driver.

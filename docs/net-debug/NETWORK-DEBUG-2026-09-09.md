@@ -1,12 +1,16 @@
-# Debug log — no `eth0` on the first `deer-image` SD boot (2026-09-09)
+# Debug log — no `eth0` on the first `sloth-image` SD boot (2026-09-09)
+
+> Recorded before the project was renamed from **deer** to **sloth** (2026-10-04).
+> Names in this file were updated; the boards and builds it describes ran as
+> `deer-orin-nano-sd` / `deer-image` / `meta-deer`.
 
 **Status:** root cause identified and fixed; verified on hardware 2026-09-13 (commit `e164021`).
 **Board:** Jetson Orin Nano Super Devkit (DTB model string reads *"NVIDIA Jetson Orin Nano Engineering Reference Developer Kit Super"*).
-**Image:** `deer-image` / `deer-orin-nano-sd`, booted from microSD, kernel `6.8.12-l4t-r39.2.1-1021.21`.
+**Image:** `sloth-image` / `sloth-orin-nano-sd`, booted from microSD, kernel `6.8.12-l4t-r39.2.1-1021.21`.
 
 ## What happened
 
-The image boots, `Deer Detection ECU 0.1 deer-orin-nano-sd tty1` appears, root
+The image boots, `Sloth Detection ECU 0.1 sloth-orin-nano-sd tty1` appears, root
 logs in — but `ip link show` lists only `lo`, so there is no way to reach the
 board from WSL and every check has to be typed on the HDMI console.
 
@@ -48,13 +52,13 @@ probe.
 
 1. **The driver was only a *recommendation*.** meta-tegra puts r8168 in
    `MACHINE_EXTRA_RRECOMMENDS`, not a hard dependency. Made explicit in
-   `meta-deer` and autoloaded, instead of relying on modalias/udev.
+   `meta-sloth` and autoloaded, instead of relying on modalias/udev.
 2. **Nothing configured the link.** `core-image-minimal` ships no
    `/etc/systemd/network/*.network`, so even once the interface exists there is
-   no DHCP client — `ip -4 addr` would still show only `lo`. The `deer-network`
+   no DHCP client — `ip -4 addr` would still show only `lo`. The `sloth-network`
    recipe fixes this and is where `can0` will live later (M3).
 
-Both are written up as copy-paste commands in `meta-deer-net-APPLY.md`
+Both are written up as copy-paste commands in `meta-sloth-net-APPLY.md`
 (same directory).
 
 ## Confirmed on hardware (2026-09-13)
@@ -70,7 +74,7 @@ RTL8822CE Wi-Fi — with no driver installed. Expected; not wired up yet.
 
 ## Lesson for the architecture document
 
-`deer-image.bb` derives from `core-image-minimal`, which deliberately omits
+`sloth-image.bb` derives from `core-image-minimal`, which deliberately omits
 almost everything. Two classes of thing therefore have to be added back by
 hand, and both bit us in one session:
 
@@ -85,7 +89,7 @@ Worth adding to architecture §3.5 as a checklist row: *"what does
 ## Fallback if the fix ever regresses
 
 If `eth0`/`enP*` does not appear after a rebuild, the question moves from
-*driver* to *PCIe enumeration*. Run `deer-net-debug.sh` and read section 2:
+*driver* to *PCIe enumeration*. Run `sloth-net-debug.sh` and read section 2:
 
 - `lspci` lists a `10ec:8168` device → driver/config problem, keep digging there.
 - `lspci` lists nothing → the NIC is not on the bus; look at the PCIe
@@ -96,7 +100,7 @@ Interim workarounds that avoid needing the network at all:
 - **USB tethering** — plug the Jetson's USB-C into the PC; the L4T
   `l4t-usb-device-mode` gadget gives `192.168.55.1`. Not present in this image
   (it is a meta-tegra recipe we did not install), but it can be added.
-- **Read reports off the SD** — `deer-net-debug.sh` copies its output to the
+- **Read reports off the SD** — `sloth-net-debug.sh` copies its output to the
   UDA partition (`/dev/mmcblk0p15`), which JetPack can mount, so console
   typing is not needed for the long dumps.
 - **Serial console** — a USB-UART on the button header (`ttyTCU0`, 115200 8N1)

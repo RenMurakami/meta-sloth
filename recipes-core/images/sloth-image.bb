@@ -1,4 +1,4 @@
-SUMMARY = "Deer detection ECU production image"
+SUMMARY = "Sloth detection ECU production image"
 LICENSE = "MIT"
 
 require recipes-core/images/core-image-minimal.bb
@@ -11,29 +11,32 @@ require recipes-core/images/core-image-minimal.bb
 # bring-up settings actually meant - `ssh -o BatchMode=yes root@192.168.1.128`
 # succeeded from anywhere on the LAN with no credential of any kind.
 #
-# Bench work uses deer-image-dev.bb, which puts those features back.
+# Bench work uses sloth-image-dev.bb, which puts those features back.
 IMAGE_FEATURES += "ssh-server-openssh"
 
 # Absolute path on the build host to the public key(s) allowed to log in as
-# root, e.g. DEER_SSH_AUTHORIZED_KEYS = "/home/you/.ssh/id_ed25519.pub" in
+# root, e.g. SLOTH_SSH_AUTHORIZED_KEYS = "/home/you/.ssh/id_ed25519.pub" in
 # local.conf.  Mandatory for this image: without it there is no way in at all.
-DEER_SSH_AUTHORIZED_KEYS ?= ""
+SLOTH_SSH_AUTHORIZED_KEYS ?= ""
 
 # 1 when the image still has a passwordless way in - i.e. it is a dev image.
-DEER_LOGIN_IS_OPEN = "${@bb.utils.contains_any('IMAGE_FEATURES', \
+SLOTH_LOGIN_IS_OPEN = "${@bb.utils.contains_any('IMAGE_FEATURES', \
     ['allow-empty-password', 'empty-root-password', 'allow-root-login', 'serial-autologin-root'], \
     '1', '0', d)}"
 
-deer_install_authorized_keys() {
-    if [ -z "${DEER_SSH_AUTHORIZED_KEYS}" ]; then
-        if [ "${DEER_LOGIN_IS_OPEN}" = "1" ]; then
-            bbwarn "DEER_SSH_AUTHORIZED_KEYS is unset: no root authorized_keys installed. Acceptable here only because this image still allows passwordless login."
+sloth_install_authorized_keys() {
+    if [ -z "${SLOTH_SSH_AUTHORIZED_KEYS}" ]; then
+        if [ "${SLOTH_LOGIN_IS_OPEN}" = "1" ]; then
+            bbwarn "SLOTH_SSH_AUTHORIZED_KEYS is unset: no root authorized_keys installed. Acceptable here only because this image still allows passwordless login."
             return 0
         fi
-        bbfatal "DEER_SSH_AUTHORIZED_KEYS is unset. ${PN} has no password login and no key, so the flashed board would be unreachable. Set it to a .pub file in local.conf, or build deer-image-dev for bench work."
+        bbfatal "SLOTH_SSH_AUTHORIZED_KEYS is unset. ${PN} has no password login and no key, so the flashed board would be unreachable. Set it to a .pub file in local.conf (or export it before running kas), or build sloth-image-dev for bench work."
+    fi
+    if [ ! -f "${SLOTH_SSH_AUTHORIZED_KEYS}" ]; then
+        bbfatal "SLOTH_SSH_AUTHORIZED_KEYS = '${SLOTH_SSH_AUTHORIZED_KEYS}' is not a file on the build host. It must be an absolute path the build can read - inside the yocto-jetson-buildenv container that means somewhere under /work."
     fi
     install -d -m 0700 ${IMAGE_ROOTFS}/home/root/.ssh
-    install -m 0600 ${DEER_SSH_AUTHORIZED_KEYS} ${IMAGE_ROOTFS}/home/root/.ssh/authorized_keys
+    install -m 0600 ${SLOTH_SSH_AUTHORIZED_KEYS} ${IMAGE_ROOTFS}/home/root/.ssh/authorized_keys
     chown -R 0:0 ${IMAGE_ROOTFS}/home/root/.ssh
 }
 
@@ -41,32 +44,32 @@ deer_install_authorized_keys() {
 # falls back to its compiled-in defaults.  State the policy instead of
 # inheriting it.  sshd_config Includes sshd_config.d/*.conf on its line 13,
 # ahead of every commented default, and first value wins in sshd_config.
-deer_harden_sshd() {
-    if [ "${DEER_LOGIN_IS_OPEN}" = "1" ]; then
+sloth_harden_sshd() {
+    if [ "${SLOTH_LOGIN_IS_OPEN}" = "1" ]; then
         return 0
     fi
     install -d ${IMAGE_ROOTFS}${sysconfdir}/ssh/sshd_config.d
-    cat > ${IMAGE_ROOTFS}${sysconfdir}/ssh/sshd_config.d/10-deer-hardening.conf <<'SSHD_EOF'
-# Deer ECU production policy.  Keys only; see meta-deer/recipes-core/images/deer-image.bb
+    cat > ${IMAGE_ROOTFS}${sysconfdir}/ssh/sshd_config.d/10-sloth-hardening.conf <<'SSHD_EOF'
+# Sloth ECU production policy.  Keys only; see meta-sloth/recipes-core/images/sloth-image.bb
 PermitRootLogin prohibit-password
 PermitEmptyPasswords no
 PasswordAuthentication no
 KbdInteractiveAuthentication no
 SSHD_EOF
-    chmod 0644 ${IMAGE_ROOTFS}${sysconfdir}/ssh/sshd_config.d/10-deer-hardening.conf
+    chmod 0644 ${IMAGE_ROOTFS}${sysconfdir}/ssh/sshd_config.d/10-sloth-hardening.conf
 }
 
-ROOTFS_POSTPROCESS_COMMAND += "deer_install_authorized_keys deer_harden_sshd"
+ROOTFS_POSTPROCESS_COMMAND += "sloth_install_authorized_keys sloth_harden_sshd"
 
 # Re-run do_rootfs when the key file itself changes.
-do_rootfs[file-checksums] += "${@'%s:True' % d.getVar('DEER_SSH_AUTHORIZED_KEYS') if d.getVar('DEER_SSH_AUTHORIZED_KEYS') else ''}"
-do_rootfs[vardeps] += "DEER_SSH_AUTHORIZED_KEYS DEER_LOGIN_IS_OPEN"
+do_rootfs[file-checksums] += "${@'%s:True' % d.getVar('SLOTH_SSH_AUTHORIZED_KEYS') if d.getVar('SLOTH_SSH_AUTHORIZED_KEYS') else ''}"
+do_rootfs[vardeps] += "SLOTH_SSH_AUTHORIZED_KEYS SLOTH_LOGIN_IS_OPEN"
 
 IMAGE_INSTALL:append = " \
     kernel-modules \
     nv-kernel-module-r8168 \
-    deer-network \
-    deer-cuda-env \
+    sloth-network \
+    sloth-cuda-env \
     tensorrt-core \
     cuda-cudart \
     libopencv-core413 \
@@ -95,14 +98,3 @@ IMAGE_ROOTFS_EXTRA_SPACE = "524288"
 
 # TODO(M2): replace with a real /data mount (systemd-repart + data.mount)
 OVERLAYFS_QA_SKIP[data] = "mount-configured"
-
-# --- /usr/local/cuda -> /usr/local/cuda-<ver> ----------------------------
-# meta-tegra installs only the versioned dir; CUDA_HOME-based builds need this.
-deer_cuda_symlink() {
-    for d in ${IMAGE_ROOTFS}${prefix}/local/cuda-*; do
-        [ -d "$d" ] || continue
-        ln -sfn "$(basename $d)" ${IMAGE_ROOTFS}${prefix}/local/cuda
-        break
-    done
-}
-ROOTFS_POSTPROCESS_COMMAND += "deer_cuda_symlink;"
