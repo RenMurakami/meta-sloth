@@ -19,8 +19,8 @@ deploy/
 __pycache__/
 *.pyc
 
-# Secrets - never.  Note that deer-authorized_keys is a PUBLIC key and lives in
-# the build tree (~/yocto), referenced by DEER_SSH_AUTHORIZED_KEYS in local.conf,
+# Secrets - never.  Note that sloth-authorized_keys is a PUBLIC key and lives in
+# the build tree (~/yocto), referenced by SLOTH_SSH_AUTHORIZED_KEYS in local.conf,
 # not in this layer.
 *.key
 *.pem
@@ -28,5 +28,8 @@ id_rsa
 id_ed25519
 .env
 
-# On-device reports produced by docs/net-debug/deer-net-debug.sh
-deer-net-debug.txt
+# On-device reports
+sloth-net-debug.txt
+
+# Output of docs/verify/sloth-target-check.sh
+sloth-target-check.txt

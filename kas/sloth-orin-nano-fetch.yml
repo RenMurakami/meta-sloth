@@ -1,0 +1,80 @@
+# kas configuration for Sloth (deer detection ECU) - self-fetching variant.
+#
+# Clones every layer by URL at a pinned commit, so a machine with nothing but
+# kas (or the yocto-jetson-buildenv container) and a meta-sloth clone can
+# reproduce the build.  The commits are tegra-demo-distro wrynose
+# f8aa7bc95b09 and its submodule pins, recorded on 2026-09-05 in
+# yocto-jetson-buildenv/docs/layer-pins-wrynose.md - the same tree
+# sloth-orin-nano.yml uses through a local checkout.
+#
+# Give kas its own work directory so the clones do not land next to an
+# existing tegra-demo-distro checkout:
+#
+#   cd /work
+#   KAS_WORK_DIR=/work/kas-fetch \
+#   SLOTH_SSH_AUTHORIZED_KEYS=/work/sloth-authorized_keys \
+#       kas build meta-sloth/kas/sloth-orin-nano-fetch.yml
+#
+# To move to newer layers, update all the commits below together, from the
+# submodule pins of one tegra-demo-distro wrynose commit.
+
+header:
+  version: 14
+  includes:
+    - kas/include/sloth-common.yml
+
+repos:
+  # oe-init-build-env lives in openembedded-core and finds bitbake as its
+  # sibling directory ../bitbake, so both are cloned side by side.
+  bitbake:
+    url: https://github.com/openembedded/bitbake.git
+    branch: "2.18"
+    commit: 0ad6c1c34a5e07a5f8dd66ab248c1e7b37b69fa9
+    layers:
+      .: disabled
+
+  openembedded-core:
+    url: https://github.com/openembedded/openembedded-core.git
+    branch: wrynose
+    commit: 00c66f1d38a234f7738c2eb8fafa41b4f057a865
+    layers:
+      meta:
+
+  meta-openembedded:
+    url: https://github.com/openembedded/meta-openembedded.git
+    branch: wrynose
+    commit: 14282a02be9c74a1276a7cda7d6c89e054699a11
+    layers:
+      meta-oe:
+      meta-python:
+      meta-networking:
+      meta-filesystems:
+
+  meta-tegra:
+    url: https://github.com/OE4T/meta-tegra.git
+    branch: wrynose
+    commit: 7a8cb6481d9a4b20f114c7ad89192d4c59f6a3d9
+
+  meta-tegra-community:
+    url: https://github.com/OE4T/meta-tegra-community.git
+    branch: wrynose
+    commit: e8fcbd636b65d051de96563de8d28f534cefac26
+
+  meta-virtualization:
+    url: https://git.yoctoproject.org/meta-virtualization
+    branch: wrynose
+    commit: 70a5d5a65d7237cfe978961fa4d8765c895cddc8
+
+  # Only the layers that live in tegra-demo-distro itself.  Its submodules are
+  # not initialised (kas does not do that); the repos above replace them.
+  tegra-demo-distro:
+    url: https://github.com/OE4T/tegra-demo-distro.git
+    branch: wrynose
+    commit: f8aa7bc95b09eac2683d1462a7aa2453299aa890
+    layers:
+      layers/meta-tegra-support:
+      layers/meta-demo-ci:
+      layers/meta-tegrademo:
+
+  # The repo this file lives in.
+  meta-sloth:

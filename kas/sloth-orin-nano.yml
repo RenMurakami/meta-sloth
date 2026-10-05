@@ -1,0 +1,44 @@
+# kas configuration for Sloth (deer detection ECU) - local-clone variant.
+#
+# Uses the tegra-demo-distro checkout that already sits next to meta-sloth, so
+# day-to-day builds on a set-up machine need no network.  For a clean machine
+# use sloth-orin-nano-fetch.yml, which clones every layer at a pinned commit.
+#
+# Run from the directory that holds both meta-sloth and tegra-demo-distro
+# (/work inside the yocto-jetson-buildenv container):
+#
+#   cd /work
+#   SLOTH_SSH_AUTHORIZED_KEYS=/work/sloth-authorized_keys \
+#       kas build meta-sloth/kas/sloth-orin-nano.yml
+#
+# The build directory is /work/build unless KAS_BUILD_DIR says otherwise.
+
+header:
+  version: 14
+  includes:
+    - kas/include/sloth-common.yml
+
+repos:
+  # Relative paths resolve against KAS_WORK_DIR (the cwd), not this file.
+  #
+  # The path is layers/, not the checkout root: kas looks for
+  # oe-init-build-env at the top of each repo, and tegra-demo-distro keeps it
+  # (and bitbake) under layers/.  That is also where its setup-env points
+  # BBLAYERS, so the layer paths match a setup-env build exactly.
+  tegra-demo-distro:
+    path: tegra-demo-distro/layers
+    layers:
+      meta:
+      meta-tegra:
+      meta-oe:
+      meta-python:
+      meta-networking:
+      meta-filesystems:
+      meta-virtualization:
+      meta-tegra-community:
+      meta-tegra-support:
+      meta-demo-ci:
+      meta-tegrademo:
+
+  # The repo this file lives in.
+  meta-sloth:
