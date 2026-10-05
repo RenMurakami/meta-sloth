@@ -1,0 +1,38 @@
+# Settings shared by every sloth kas configuration.  Not meant to be built on
+# its own - include it from a file that also declares `repos:`.
+
+header:
+  version: 14
+
+machine: sloth-orin-nano-sd
+distro: sloth
+target: sloth-image
+build_system: openembedded
+
+# kas runs oe-init-build-env, not tegra-demo-distro's setup-env, so the
+# ~/.yocto/site.conf that setup-env links in never reaches a kas build.  The
+# shared caches have to be stated here or every kas build starts cold.
+#
+# Each value below is a default: exporting the same variable before running
+# kas overrides it.  kas adds all of them to BB_ENV_PASSTHROUGH_ADDITIONS.
+env:
+  # Paths match yocto-jetson-buildenv's bind mounts (docker/yocto-shell.sh).
+  DL_DIR: "/srv/yocto/downloads"
+  SSTATE_DIR: "/srv/yocto/sstate-cache"
+  # Hash-equivalence DB lives with sstate, or sstate reuse breaks across
+  # build directories.
+  BB_HASHSERVE_DB_DIR: "/srv/yocto/sstate-cache"
+  # 23 GB host: more than 4 parallel tasks runs out of RAM.
+  BB_NUMBER_THREADS: "4"
+  PARALLEL_MAKE: "-j 4"
+  # Public key(s) installed as root's authorized_keys in sloth-image.  No
+  # default on purpose: it is a per-developer file, and sloth-image stops with
+  # an error naming this variable when it is missing.  See README.md.
+  SLOTH_SSH_AUTHORIZED_KEYS: null
+
+local_conf_header:
+  sloth-images: |
+    # Plain rootfs tarball next to the tegraflash bundle (NVMe dual-boot
+    # install path), as yocto-jetson-buildenv's site.conf does for setup-env
+    # builds.
+    IMAGE_FSTYPES:append = " tar.gz"
