@@ -173,6 +173,11 @@ native x86-64 Linux host.
 
 ## Documentation
 
+[`docs/sloth-image-docs.html`](docs/sloth-image-docs.html) is a one-page reference for the
+whole image: stack versions, layer pins, build and flash steps, SD layout,
+the latest on-target results and a searchable list of every package. Open it
+in a browser.
+
 [`docs/net-debug/`](docs/net-debug/) records the network bring-up
 investigation, which is the most load-bearing history in this layer:
 
