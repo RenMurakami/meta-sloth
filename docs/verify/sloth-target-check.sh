@@ -17,8 +17,8 @@ fail() { echo "FAIL  $*"; fails=$((fails + 1)); }
 info() { echo "INFO  $*"; }
 check() {   # check <description> <command...>
     desc="$1"; shift
-    if out=$("$@" 2>&1); then pass "$desc${out:+: $(echo "$out" | head -1)}"
-    else fail "$desc${out:+: $(echo "$out" | head -1)}"; fi
+    if out=$("$@" 2>&1); then pass "$desc${out:+: $(echo "$out" | head -n 1)}"
+    else fail "$desc${out:+: $(echo "$out" | head -n 1)}"; fi
 }
 
 echo "=== identity"
@@ -37,8 +37,8 @@ info "root size $(df -h / | awk 'NR==2 {print $2 " total, " $4 " free"}') (growf
 echo "=== systemd"
 failed=$(systemctl --failed --no-legend --plain 2>/dev/null)
 if [ -z "$failed" ]; then pass "no failed units"; else fail "failed units: $(echo "$failed" | awk '{print $1}' | tr '\n' ' ')"; fi
-info "$(systemd-analyze 2>/dev/null | head -1)"
-systemd-analyze blame 2>/dev/null | head -5 | sed 's/^/INFO    blame /'
+info "$(systemd-analyze 2>/dev/null | head -n 1)"
+systemd-analyze blame 2>/dev/null | head -n 5 | sed 's/^/INFO    blame /'
 
 echo "=== network"
 check "r8168 loaded"            sh -c 'lsmod | grep -w r8168'
@@ -80,7 +80,7 @@ else
 fi
 
 echo "=== camera path (C6, C8)"
-check "uvcvideo module installed" sh -c 'find /lib/modules/$(uname -r) -name "uvcvideo.ko*" | head -1'
+check "uvcvideo module installed" sh -c 'find /lib/modules/$(uname -r) -name "uvcvideo.ko*" | head -n 1'
 check "uvcvideo loads"            sh -c 'modprobe uvcvideo && lsmod | grep -w uvcvideo'
 info "video devices: $(ls /dev/video* 2>/dev/null | tr '\n' ' ' || echo none) (none is expected without the camera plugged in)"
 info "OpenCV libs: $(ls /usr/lib/libopencv_*.so.* 2>/dev/null | xargs -n1 basename | sed 's/\.so\..*//' | sort -u | tr '\n' ' ')"
