@@ -8,7 +8,8 @@
 # Growing at boot rather than baking a 14 GiB rootfs keeps the .img small
 # (fast dd, small swupdate payloads) and makes a fresh rootfs written to APP_b
 # by an OTA grow itself the same way.  It stops at the partition edge: the
-# card's remaining ~200 GB needs systemd-repart, which is D8 /data work.
+# rest of the disk becomes /data and /rec, which systemd-repart creates on
+# first boot (recipes-core/sloth-data).
 #
 # systemd-fstab-generator turns x-systemd.growfs on "/" into
 # systemd-growfs-root.service, and systemd-growfs(8) resizes ext4 through the
