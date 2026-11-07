@@ -16,7 +16,8 @@
 header:
   version: 14
   includes:
-    - kas/include/sloth-common.yml
+    - repo: meta-sloth
+      file: kas/include/sloth-common.yml
 
 repos:
   # Relative paths resolve against KAS_WORK_DIR (the cwd), not this file.
@@ -42,3 +43,4 @@ repos:
 
   # The repo this file lives in.
   meta-sloth:
+    path: meta-sloth
