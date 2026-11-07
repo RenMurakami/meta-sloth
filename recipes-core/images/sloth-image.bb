@@ -69,6 +69,7 @@ IMAGE_INSTALL:append = " \
     kernel-modules \
     nv-kernel-module-r8168 \
     sloth-network \
+    sloth-data \
     sloth-cuda-env \
     tensorrt-core \
     cuda-cudart \
@@ -95,6 +96,3 @@ IMAGE_INSTALL:append = " \
 # enough slack to boot once.  Padding it here would only make the .img bigger
 # and every dd and swupdate payload slower.
 IMAGE_ROOTFS_EXTRA_SPACE = "524288"
-
-# TODO(M2): replace with a real /data mount (systemd-repart + data.mount)
-OVERLAYFS_QA_SKIP[data] = "mount-configured"
