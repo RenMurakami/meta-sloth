@@ -1,0 +1,18 @@
+# Stable names for the partitions of the disk Sloth boots from:
+#
+#   /dev/disk/sloth-boot/<GPT partition name>   e.g. .../APP, .../APP_b, .../esp
+#
+# /dev/disk/by-partlabel/<name> is ambiguous on this board: the NVMe holds a
+# JetPack install with the same NVIDIA partition names (APP, esp, UDA, ...),
+# and udev points the by-partlabel link at whichever disk it probed last.
+# Anything that writes to a partition by name - the OTA (sw-description,
+# swupdate-genconfig) and the ESP mount - uses these links instead.
+#
+# @BOOTDISK@ is TNSPEC_BOOTDEV without its partition suffix (mmcblk0 for the
+# SD machine, nvme0n1 once the rootfs moves to the NVMe).  Runs after
+# 60-persistent-storage.rules, which imports ID_PART_ENTRY_NAME.
+ACTION=="remove", GOTO="sloth_bootdisk_end"
+SUBSYSTEM!="block", GOTO="sloth_bootdisk_end"
+ENV{DEVTYPE}!="partition", GOTO="sloth_bootdisk_end"
+KERNEL=="@BOOTDISK@p[0-9]*", ENV{ID_PART_ENTRY_NAME}=="?*", SYMLINK+="disk/sloth-boot/$env{ID_PART_ENTRY_NAME}"
+LABEL="sloth_bootdisk_end"

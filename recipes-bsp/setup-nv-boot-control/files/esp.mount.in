@@ -1,0 +1,11 @@
+[Unit]
+Description=EFI system partition of the boot disk
+Before=local-fs.target
+
+[Mount]
+# Not /dev/disk/by-partlabel/esp: JetPack's NVMe has an "esp" partition too.
+# The OTA drops its bootloader capsule here (EFI/UpdateCapsule), and UEFI
+# only looks for capsules on the ESP of the device it is booting from.
+What=/dev/disk/sloth-boot/esp
+Where=@ESPMOUNT@
+Type=vfat

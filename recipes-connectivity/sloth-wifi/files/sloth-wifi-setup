@@ -1,0 +1,60 @@
+#!/bin/sh
+# Store Wi-Fi credentials for wlan0 and (re)start wpa_supplicant.
+#
+#   sloth-wifi-setup [SSID]        asks for the passphrase without echoing it
+#
+# The file is written under /etc/wpa_supplicant, which is an overlay on /data:
+# it survives OTA updates, and it never enters an image, a package or git.
+# The network block accepts WPA2-PSK and WPA3-SAE (decision W8), so the same
+# file keeps working if the router is switched to WPA3.
+set -eu
+
+IFACE=wlan0
+CONF=/etc/wpa_supplicant/wpa_supplicant-nl80211-$IFACE.conf
+COUNTRY=US
+
+ssid=${1:-}
+if [ -z "$ssid" ]; then
+    printf 'SSID: '
+    read -r ssid
+fi
+[ -n "$ssid" ] || { echo "sloth-wifi-setup: no SSID given" >&2; exit 1; }
+
+printf 'Passphrase for "%s": ' "$ssid"
+stty -echo 2>/dev/null || true
+read -r psk
+stty echo 2>/dev/null || true
+echo
+
+len=${#psk}
+if [ "$len" -lt 8 ] || [ "$len" -gt 63 ]; then
+    echo "sloth-wifi-setup: a WPA passphrase is 8 to 63 characters" >&2
+    exit 1
+fi
+
+if ! findmnt -n /etc/wpa_supplicant >/dev/null 2>&1; then
+    echo "sloth-wifi-setup: warning: /etc/wpa_supplicant is not on /data;" \
+         "this setting will be lost at the next OTA update" >&2
+fi
+
+umask 077
+mkdir -p "$(dirname "$CONF")"
+tmp=$(mktemp "$CONF.XXXXXX")
+# psk must stay a plain passphrase (not a wpa_passphrase hash): SAE needs it.
+cat > "$tmp" <<EOF
+ctrl_interface=/run/wpa_supplicant
+update_config=0
+country=$COUNTRY
+
+network={
+    ssid="$ssid"
+    psk="$psk"
+    key_mgmt=WPA-PSK SAE
+    ieee80211w=1
+}
+EOF
+mv "$tmp" "$CONF"
+
+systemctl restart "wpa_supplicant-nl80211@$IFACE.service"
+echo "Saved $CONF and restarted wpa_supplicant on $IFACE."
+echo "Check with: wpa_cli -i $IFACE status; networkctl status $IFACE"

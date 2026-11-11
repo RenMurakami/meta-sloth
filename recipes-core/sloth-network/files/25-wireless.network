@@ -1,0 +1,15 @@
+[Match]
+Name=wlan0
+
+[Network]
+DHCP=yes
+
+[DHCPv4]
+UseDNS=yes
+# See 20-wired.network.
+ClientIdentifier=mac
+# W4: Wi-Fi is the fallback; the wired route (metric 100) wins when both are up.
+RouteMetric=600
+
+[IPv6AcceptRA]
+RouteMetric=600

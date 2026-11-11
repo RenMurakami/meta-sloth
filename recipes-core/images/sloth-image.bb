@@ -35,9 +35,13 @@ sloth_install_authorized_keys() {
     if [ ! -f "${SLOTH_SSH_AUTHORIZED_KEYS}" ]; then
         bbfatal "SLOTH_SSH_AUTHORIZED_KEYS = '${SLOTH_SSH_AUTHORIZED_KEYS}' is not a file on the build host. It must be an absolute path the build can read - inside the yocto-jetson-buildenv container that means somewhere under /work."
     fi
-    install -d -m 0700 ${IMAGE_ROOTFS}/home/root/.ssh
-    install -m 0600 ${SLOTH_SSH_AUTHORIZED_KEYS} ${IMAGE_ROOTFS}/home/root/.ssh/authorized_keys
-    chown -R 0:0 ${IMAGE_ROOTFS}/home/root/.ssh
+    # ROOT_HOME, not a literal /home/root: oe-core now defaults root's home to
+    # /root, and sshd only reads the authorized_keys of the home in /etc/passwd.
+    # (The first on-target test of sloth-image, 2026-11-11, found the key
+    # installed under /home/root and ignored.)
+    install -d -m 0700 ${IMAGE_ROOTFS}${ROOT_HOME}/.ssh
+    install -m 0600 ${SLOTH_SSH_AUTHORIZED_KEYS} ${IMAGE_ROOTFS}${ROOT_HOME}/.ssh/authorized_keys
+    chown -R 0:0 ${IMAGE_ROOTFS}${ROOT_HOME}/.ssh
 }
 
 # oe-core leaves PermitRootLogin/PermitEmptyPasswords commented out, so sshd
@@ -57,19 +61,56 @@ PasswordAuthentication no
 KbdInteractiveAuthentication no
 SSHD_EOF
     chmod 0644 ${IMAGE_ROOTFS}${sysconfdir}/ssh/sshd_config.d/10-sloth-hardening.conf
+
+    # W3: password login (root included) from the local network only.  A
+    # Match block in an Include'd file ends with that file, and it overrides
+    # the global "keys only" lines above for matching clients.
+    cat > ${IMAGE_ROOTFS}${sysconfdir}/ssh/sshd_config.d/20-sloth-lan-password.conf <<SSHD_EOF
+# Sloth ECU: password login from the local network (decision W3).
+# Everywhere else the keys-only policy of 10-sloth-hardening.conf applies.
+Match Address ${SLOTH_SSH_PASSWORD_NETWORK}
+    PasswordAuthentication yes
+    PermitRootLogin yes
+SSHD_EOF
+    chmod 0644 ${IMAGE_ROOTFS}${sysconfdir}/ssh/sshd_config.d/20-sloth-lan-password.conf
 }
+
+# ---------------------------------------------------------------------------
+# Password login from the LAN (decision W3) - production image only
+# ---------------------------------------------------------------------------
+# Networks allowed to log in with a password (sshd "Match Address" syntax,
+# comma-separated).  Keys keep working from anywhere.
+SLOTH_SSH_PASSWORD_NETWORK ?= "192.168.1.0/24"
+
+# Root password hash.  The default is the TEMPORARY password <removed>, agreed
+# for bring-up; set your own in local.conf with
+#   openssl passwd -6 '<password>'     (write every $ as \$)
+# /etc/shadow is on the rootfs, so an OTA update resets the password to this
+# value - a changed password does not survive an update yet.
+SLOTH_ROOT_PASSWORD_HASH ?= "<removed>"
+
+# The dev image keeps its empty root password (SLOTH_LOGIN_IS_OPEN = 1).
+def sloth_root_password_params(d):
+    if d.getVar('SLOTH_LOGIN_IS_OPEN') == '1':
+        return ''
+    return "usermod -p '%s' root;" % d.getVar('SLOTH_ROOT_PASSWORD_HASH')
+
+inherit extrausers
+EXTRA_USERS_PARAMS = "${@sloth_root_password_params(d)}"
 
 ROOTFS_POSTPROCESS_COMMAND += "sloth_install_authorized_keys sloth_harden_sshd"
 
 # Re-run do_rootfs when the key file itself changes.
 do_rootfs[file-checksums] += "${@'%s:True' % d.getVar('SLOTH_SSH_AUTHORIZED_KEYS') if d.getVar('SLOTH_SSH_AUTHORIZED_KEYS') else ''}"
-do_rootfs[vardeps] += "SLOTH_SSH_AUTHORIZED_KEYS SLOTH_LOGIN_IS_OPEN"
+do_rootfs[vardeps] += "SLOTH_SSH_AUTHORIZED_KEYS SLOTH_LOGIN_IS_OPEN SLOTH_SSH_PASSWORD_NETWORK"
 
 IMAGE_INSTALL:append = " \
     kernel-modules \
     nv-kernel-module-r8168 \
     sloth-network \
     sloth-data \
+    sloth-wifi \
+    sloth-bootdisk \
     sloth-cuda-env \
     tensorrt-core \
     cuda-cudart \
@@ -96,3 +137,19 @@ IMAGE_INSTALL:append = " \
 # enough slack to boot once.  Padding it here would only make the .img bigger
 # and every dd and swupdate payload slower.
 IMAGE_ROOTFS_EXTRA_SPACE = "524288"
+
+# ---------------------------------------------------------------------------
+# OTA (SWUpdate, A/B rootfs + bootloader capsule)
+# ---------------------------------------------------------------------------
+# swupdate          the update agent; swupdate-machine-config (meta-tegrademo)
+#                   generates its config for the running slot at every start
+# swupdate-client   installs a .swu by hand:  swupdate-client <file>.swu
+# tegra-redundant-boot
+#                   nvbootctrl, nv_update_verifier (marks a boot good once
+#                   multi-user is reached) and, through setup-nv-boot-control,
+#                   the /boot/efi mount where the capsule is dropped
+# The .swu itself is built by sloth-image-swupdate / sloth-image-dev-swupdate
+# (dynamic-layers/meta-swupdate).  The guard keeps the image buildable in a
+# layer set without meta-swupdate.
+SLOTH_OTA_PACKAGES = "swupdate swupdate-client tegra-redundant-boot"
+IMAGE_INSTALL:append = " ${@bb.utils.contains('BBFILE_COLLECTIONS', 'swupdate', d.getVar('SLOTH_OTA_PACKAGES'), '', d)}"

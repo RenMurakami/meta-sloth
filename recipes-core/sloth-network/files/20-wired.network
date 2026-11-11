@@ -6,3 +6,12 @@ DHCP=yes
 
 [DHCPv4]
 UseDNS=yes
+# Identify by MAC address, not by the machine-id derived DUID: machine-id
+# lives on the rootfs, so it changes with every OTA slot switch and the board
+# would get a new address after each update.
+ClientIdentifier=mac
+# W4: wired wins over Wi-Fi (25-wireless.network uses 600).
+RouteMetric=100
+
+[IPv6AcceptRA]
+RouteMetric=100

@@ -16,8 +16,10 @@ inherit systemd overlayfs
 # OVERLAYFS_MOUNT_POINT comes from the machine config, so this is machine-specific.
 PACKAGE_ARCH = "${MACHINE_ARCH}"
 
-# /etc paths kept on /data across OTA updates. /etc/wpa_supplicant joins in the Wi-Fi step.
-OVERLAYFS_WRITABLE_PATHS[data] = "/etc/ssh"
+# /etc paths kept on /data across OTA updates:
+#   /etc/ssh             host keys - the board keeps its SSH identity through an OTA
+#   /etc/wpa_supplicant  Wi-Fi credentials written by sloth-wifi-setup (W5)
+OVERLAYFS_WRITABLE_PATHS[data] = "/etc/ssh /etc/wpa_supplicant"
 
 SYSTEMD_SERVICE:${PN} = "data.mount rec.mount"
 SYSTEMD_AUTO_ENABLE:${PN} = "enable"
