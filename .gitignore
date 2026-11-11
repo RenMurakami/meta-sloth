@@ -31,10 +31,12 @@ id_ed25519
 # On-device reports
 sloth-net-debug.txt
 
-# Output of docs/verify/sloth-target-check.sh
+# Output of scripts/sloth-target-check.sh
 sloth-target-check.txt
 
-# Verification reports stay local: this repository is public, and the reports
-# record site details (Wi-Fi SSID, LAN and tailnet addresses, accounts).
-# Files already tracked are not affected; untrack them with git rm --cached.
-docs/verify/report-*
+# docs/ stays local.  This repository is public, and the bring-up notes,
+# verification reports and the HTML reference record site details (host
+# names, user names, MAC and IP addresses, Wi-Fi SSID, key fingerprints).
+# Files that were already tracked are not affected by this rule; untrack them
+# with:  git rm -r --cached docs
+/docs/
