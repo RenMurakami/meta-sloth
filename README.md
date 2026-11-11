@@ -191,11 +191,25 @@ investigation, which is the most load-bearing history in this layer:
 ## Status
 
 `DISTRO_VERSION = "0.1"`. The board boots from microSD, brings up DHCP on the
-RTL8168 NIC and on Wi-Fi (RTL8822CE), accepts key-based root SSH (plus password
-SSH from the LAN on `sloth-image`), keeps `/data` and `/rec` across updates, and
-updates itself A/B over the air with SWUpdate. Verified on hardware on
-2026-11-11 with four OTA updates in both directions:
-[`docs/verify/report-2026-11-11-ota.html`](docs/verify/report-2026-11-11-ota.html).
+RTL8168 NIC and on Wi-Fi (RTL8822CE), joins a Tailscale tailnet, accepts
+key-based root SSH (plus password SSH from the LAN and the tailnet on
+`sloth-image`), keeps `/data` and `/rec` across updates, and updates itself A/B
+over the air with SWUpdate. Verified on hardware on 2026-11-11 with four OTA
+updates in both directions. (Verification reports under `docs/verify/report-*`
+are kept out of this public repository; see `.gitignore`.)
+
+### Secrets for a build
+
+Nothing secret lives in this layer. Two files on the build host, passed in
+through the environment (`kas/include/sloth-common.yml`):
+
+```bash
+export SLOTH_SSH_AUTHORIZED_KEYS=/work/sloth-authorized_keys        # public key(s) for root
+export SLOTH_ROOT_PASSWORD_HASH_FILE=/work/sloth-root-password.hash # openssl passwd -6 > that file
+```
+
+Without the second one, `sloth-image` has no root password (keys only) and
+`sloth-image-dev` an empty one.
 
 ### OTA update
 
@@ -218,6 +232,13 @@ Credentials never enter an image or git. On the board, once:
 `sloth-wifi-setup <SSID>` (asks for the passphrase; stores it under
 `/etc/wpa_supplicant`, an overlay on `/data`).
 
+### Tailscale
+
+`tailscaled` runs in both images with its state in `/var/lib/tailscale`, an
+overlay on `/data`, so the board stays the same tailnet node across OTA
+updates. Join once, on the board: `tailscale up --accept-dns=false`, then open
+the printed login URL. In the admin console, disable key expiry for the board.
+
 Known open items:
 
 - `can0` is not configured; the CAN device tree overlay
@@ -225,6 +246,5 @@ Known open items:
   in `sloth-orin-nano-common.inc`.
 - OTA: `.swu` files are not signed, there is no hawkBit/suricatta server yet,
   and automatic rollback after a failed boot is untested (needs a watchdog).
-- The root password (`sloth-image`) lives on the rootfs, so an OTA update
-  resets it to `SLOTH_ROOT_PASSWORD_HASH`.
-- See the 2026-11-11 report for the full list.
+- The root password lives on the rootfs, so an OTA update resets it to the
+  hash in `SLOTH_ROOT_PASSWORD_HASH_FILE`.

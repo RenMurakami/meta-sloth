@@ -33,3 +33,8 @@ sloth-net-debug.txt
 
 # Output of docs/verify/sloth-target-check.sh
 sloth-target-check.txt
+
+# Verification reports stay local: this repository is public, and the reports
+# record site details (Wi-Fi SSID, LAN and tailnet addresses, accounts).
+# Files already tracked are not affected; untrack them with git rm --cached.
+docs/verify/report-*

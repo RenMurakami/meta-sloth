@@ -29,6 +29,9 @@ env:
   # default on purpose: it is a per-developer file, and sloth-image stops with
   # an error naming this variable when it is missing.  See README.md.
   SLOTH_SSH_AUTHORIZED_KEYS: null
+  # File holding the root password hash (openssl passwd -6), outside this
+  # public layer.  Unset: no root password.  See sloth-image.bb.
+  SLOTH_ROOT_PASSWORD_HASH_FILE: null
 
 local_conf_header:
   sloth-images: |
