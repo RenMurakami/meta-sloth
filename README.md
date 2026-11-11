@@ -61,7 +61,7 @@ which holds everything shared by future variants:
 - **Ethernet:** the p3768 devkit's RJ45 is a Realtek RTL8168 on PCIe, not the
   Tegra EQOS. meta-tegra only `RRECOMMENDS` the module, so the `.inc` promotes
   it to `MACHINE_ESSENTIAL_EXTRA_RDEPENDS` and autoloads `r8168`. Getting this
-  wrong is what the `docs/net-debug/` investigation was about.
+  wrong is what the network bring-up investigation (D8) was about.
 - **overlayfs:** `OVERLAYFS_MOUNT_POINT[data] = "/data"` — required in the
   machine config by `overlayfs.bbclass`.
 - Bluetooth removed from `MACHINE_FEATURES`.
@@ -173,20 +173,21 @@ native x86-64 Linux host.
 
 ## Documentation
 
-[`docs/sloth-image-docs.html`](docs/sloth-image-docs.html) is a one-page reference for the
-whole image: stack versions, layer pins, build and flash steps, SD layout,
-the latest on-target results and a searchable list of every package. Open it
-in a browser.
+This repository is public, so the working documentation lives in `docs/` on
+each developer's machine and is not committed (see `.gitignore`): the
+one-page image reference, the network bring-up notes (D8, referred to from
+recipe comments) and the on-target verification reports. They record site
+details - host names, addresses, SSIDs - that differ per developer and do not
+belong in a public tree. Share them directly, not through git.
 
-[`docs/net-debug/`](docs/net-debug/) records the network bring-up
-investigation, which is the most load-bearing history in this layer:
+The on-device tools are shared and live in [`scripts/`](scripts/):
 
-| File | Contents |
+| Script | What it does |
 |---|---|
-| `NETWORK-DEBUG-2026-09-09.md` | The investigation: why the board had no network. |
-| `meta-sloth-net-APPLY.md` | The fix, as applied to this layer. |
-| `D8-VERIFICATION-2026-09-13.md` | What the rebuild measured, and which gaps are still open. |
-| `sloth-net-debug.sh` | On-device report generator; writes `/tmp/sloth-net-debug.txt`. |
+| `sloth-target-check.sh` | PASS/FAIL check of a running board (boot medium, network, CUDA, TensorRT, camera path). `ssh root@<board-ip> sh -s < scripts/sloth-target-check.sh` |
+| `sloth-net-debug.sh` | Network report generator from the D8 bring-up; writes `/tmp/sloth-net-debug.txt` on the board. |
+
+Their output files are gitignored: they record site details.
 
 ## Status
 
@@ -195,8 +196,8 @@ RTL8168 NIC and on Wi-Fi (RTL8822CE), joins a Tailscale tailnet, accepts
 key-based root SSH (plus password SSH from the LAN and the tailnet on
 `sloth-image`), keeps `/data` and `/rec` across updates, and updates itself A/B
 over the air with SWUpdate. Verified on hardware on 2026-11-11 with four OTA
-updates in both directions. (Verification reports under `docs/verify/report-*`
-are kept out of this public repository; see `.gitignore`.)
+updates in both directions. (The verification reports are kept out of this
+public repository; see Documentation above.)
 
 ### Secrets for a build
 
