@@ -19,7 +19,8 @@ PACKAGE_ARCH = "${MACHINE_ARCH}"
 # /etc paths kept on /data across OTA updates:
 #   /etc/ssh             host keys - the board keeps its SSH identity through an OTA
 #   /etc/wpa_supplicant  Wi-Fi credentials written by sloth-wifi-setup (W5)
-OVERLAYFS_WRITABLE_PATHS[data] = "/etc/ssh /etc/wpa_supplicant"
+#   /var/lib/tailscale   tailnet identity and login (sloth-tailscale)
+OVERLAYFS_WRITABLE_PATHS[data] = "/etc/ssh /etc/wpa_supplicant /var/lib/tailscale"
 
 SYSTEMD_SERVICE:${PN} = "data.mount rec.mount"
 SYSTEMD_AUTO_ENABLE:${PN} = "enable"

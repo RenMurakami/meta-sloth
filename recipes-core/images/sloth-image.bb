@@ -62,11 +62,12 @@ KbdInteractiveAuthentication no
 SSHD_EOF
     chmod 0644 ${IMAGE_ROOTFS}${sysconfdir}/ssh/sshd_config.d/10-sloth-hardening.conf
 
-    # W3: password login (root included) from the local network only.  A
-    # Match block in an Include'd file ends with that file, and it overrides
-    # the global "keys only" lines above for matching clients.
+    # W3: password login (root included) from SLOTH_SSH_PASSWORD_NETWORK only
+    # (the LAN and the tailnet).  A Match block in an Include'd file ends with
+    # that file (OpenSSH servconf.c resets the Match state per included file),
+    # and it overrides the global "keys only" lines above for matching clients.
     cat > ${IMAGE_ROOTFS}${sysconfdir}/ssh/sshd_config.d/20-sloth-lan-password.conf <<SSHD_EOF
-# Sloth ECU: password login from the local network (decision W3).
+# Sloth ECU: password login from the local network and the tailnet (W3).
 # Everywhere else the keys-only policy of 10-sloth-hardening.conf applies.
 Match Address ${SLOTH_SSH_PASSWORD_NETWORK}
     PasswordAuthentication yes
@@ -76,27 +77,50 @@ SSHD_EOF
 }
 
 # ---------------------------------------------------------------------------
-# Password login from the LAN (decision W3) - production image only
+# Password login (decision W3)
 # ---------------------------------------------------------------------------
-# Networks allowed to log in with a password (sshd "Match Address" syntax,
-# comma-separated).  Keys keep working from anywhere.
-SLOTH_SSH_PASSWORD_NETWORK ?= "192.168.1.0/24"
+# Networks allowed to log in with a password on sloth-image (sshd "Match
+# Address" syntax, comma-separated).  Keys keep working from anywhere.
+#   192.168.1.0/24  the local network
+#   100.64.0.0/10   Tailscale: every tailnet address is in this range, so
+#                   devices on your tailnet can log in from any network
+SLOTH_SSH_PASSWORD_NETWORK ?= "192.168.1.0/24,100.64.0.0/10"
 
-# Root password hash.  The default is the TEMPORARY password <removed>, agreed
-# for bring-up; set your own in local.conf with
-#   openssl passwd -6 '<password>'     (write every $ as \$)
+# Root password, for BOTH images.  It never lives in this layer: the
+# repository is public.  SLOTH_ROOT_PASSWORD_HASH_FILE is an absolute path on
+# the build host to a file holding one crypt(3) hash, made with
+#   openssl passwd -6 > /work/sloth-root-password.hash      (asks for the password)
+# Like SLOTH_SSH_AUTHORIZED_KEYS, kas passes it through from the environment
+# (kas/include/sloth-common.yml).  Unset, no password is set: sloth-image then
+# has a locked root password (keys only) and sloth-image-dev an empty one.
+# sloth-image-dev takes the password too: with Tailscale the board is
+# reachable from outside the LAN, so an empty root password is not acceptable
+# there.  (The dev image still allows root login, serial autologin and keys.)
 # /etc/shadow is on the rootfs, so an OTA update resets the password to this
-# value - a changed password does not survive an update yet.
-SLOTH_ROOT_PASSWORD_HASH ?= "<removed>"
+# file's value - a password changed on the device does not survive an update.
+SLOTH_ROOT_PASSWORD_HASH_FILE ?= ""
 
-# The dev image keeps its empty root password (SLOTH_LOGIN_IS_OPEN = 1).
 def sloth_root_password_params(d):
-    if d.getVar('SLOTH_LOGIN_IS_OPEN') == '1':
+    path = d.getVar('SLOTH_ROOT_PASSWORD_HASH_FILE')
+    if not path:
         return ''
-    return "usermod -p '%s' root;" % d.getVar('SLOTH_ROOT_PASSWORD_HASH')
+    try:
+        with open(path) as f:
+            pwhash = f.read().strip()
+    except OSError as e:
+        bb.fatal("SLOTH_ROOT_PASSWORD_HASH_FILE = '%s' cannot be read (%s). Inside the "
+                 "yocto-jetson-buildenv container it must be under /work." % (path, e))
+    if not pwhash.startswith('$') or any(c in pwhash for c in " '\"\n"):
+        bb.fatal("SLOTH_ROOT_PASSWORD_HASH_FILE must hold a single crypt(3) hash, "
+                 "as printed by 'openssl passwd -6'")
+    # extrausers expands EXTRA_USERS_PARAMS inside a double-quoted shell
+    # string, so every $ of the hash has to reach the shell as \$.
+    return "usermod -p '%s' root;" % pwhash.replace('$', '\\$')
 
 inherit extrausers
 EXTRA_USERS_PARAMS = "${@sloth_root_password_params(d)}"
+do_rootfs[file-checksums] += "${@'%s:True' % d.getVar('SLOTH_ROOT_PASSWORD_HASH_FILE') if d.getVar('SLOTH_ROOT_PASSWORD_HASH_FILE') else ''}"
+do_rootfs[vardeps] += "SLOTH_ROOT_PASSWORD_HASH_FILE"
 
 ROOTFS_POSTPROCESS_COMMAND += "sloth_install_authorized_keys sloth_harden_sshd"
 
@@ -110,6 +134,7 @@ IMAGE_INSTALL:append = " \
     sloth-network \
     sloth-data \
     sloth-wifi \
+    sloth-tailscale \
     sloth-bootdisk \
     sloth-cuda-env \
     tensorrt-core \
