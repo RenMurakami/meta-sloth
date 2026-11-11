@@ -40,6 +40,9 @@ repos:
       meta-tegra-support:
       meta-demo-ci:
       meta-tegrademo:
+      # OTA.  Its presence also activates meta-tegrademo's and meta-sloth's
+      # dynamic-layers/meta-swupdate (sw-description, Lua postinst, configs).
+      meta-swupdate:
 
   # The repo this file lives in.
   meta-sloth:

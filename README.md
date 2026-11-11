@@ -74,7 +74,7 @@ which holds everything shared by future variants:
 | [`sloth-image-dev.bb`](recipes-core/images/sloth-image-dev.bb) | Bench work. Everything above **plus** passwordless root, serial autologin, `tools-debug`, strace, gdb, python3-opencv. Never ship it. |
 
 **Login policy (architecture D5).** `sloth-image` installs
-`/home/root/.ssh/authorized_keys` from `SLOTH_SSH_AUTHORIZED_KEYS`, an absolute
+`${ROOT_HOME}/.ssh/authorized_keys` (`/root/.ssh/authorized_keys`) from `SLOTH_SSH_AUTHORIZED_KEYS`, an absolute
 path on the *build host* that you set in `local.conf`:
 
 ```
@@ -191,14 +191,40 @@ investigation, which is the most load-bearing history in this layer:
 ## Status
 
 `DISTRO_VERSION = "0.1"`. The board boots from microSD, brings up DHCP on the
-RTL8168 NIC, and accepts key-based root SSH.
+RTL8168 NIC and on Wi-Fi (RTL8822CE), accepts key-based root SSH (plus password
+SSH from the LAN on `sloth-image`), keeps `/data` and `/rec` across updates, and
+updates itself A/B over the air with SWUpdate. Verified on hardware on
+2026-11-11 with four OTA updates in both directions:
+[`docs/verify/report-2026-11-11-ota.html`](docs/verify/report-2026-11-11-ota.html).
 
-Known open items, all tracked in `D8-VERIFICATION-2026-09-13.md`:
+### OTA update
 
-- `/data` is not yet a real partition — `OVERLAYFS_QA_SKIP[data]` papers over it
-  until `systemd-repart` lands (`TODO(M2)` in `sloth-image.bb`).
+```bash
+# build: rootfs + bootloader capsule + L4TLauncher + Lua postinst in one .swu
+kas shell meta-sloth/kas/sloth-orin-nano.yml -c "bitbake sloth-image-dev-swupdate"   # or sloth-image-swupdate
+# on the board: install into the other slot, then reboot (UEFI applies the
+# capsule and boots the other slot; about two minutes)
+scp ~/yocto/build-sloth/tmp/deploy/images/sloth-orin-nano-sd/sloth-image-dev-sloth-orin-nano-sd.swu root@<ip>:/rec/ota/
+ssh root@<ip> 'swupdate-client /rec/ota/sloth-image-dev-sloth-orin-nano-sd.swu && reboot'
+ssh root@<ip> 'nvbootctrl dump-slots-info'      # slot changed, "Capsule update status: 1"
+```
+
+Use JetPack (BootNext to the NVMe) only while the board is on slot A; booting
+it from slot B has not been tested.
+
+### Wi-Fi
+
+Credentials never enter an image or git. On the board, once:
+`sloth-wifi-setup <SSID>` (asks for the passphrase; stores it under
+`/etc/wpa_supplicant`, an overlay on `/data`).
+
+Known open items:
+
 - `can0` is not configured; the CAN device tree overlay
   (`recipes-bsp/sloth-overlays`) does not exist yet. The hooks are commented out
   in `sloth-orin-nano-common.inc`.
-- `layer.conf` declares `BBFILES_DYNAMIC` for `meta-swupdate`, but
-  `dynamic-layers/` is not created yet. Harmless until swupdate work starts.
+- OTA: `.swu` files are not signed, there is no hawkBit/suricatta server yet,
+  and automatic rollback after a failed boot is untested (needs a watchdog).
+- The root password (`sloth-image`) lives on the rootfs, so an OTA update
+  resets it to `SLOTH_ROOT_PASSWORD_HASH`.
+- See the 2026-11-11 report for the full list.
