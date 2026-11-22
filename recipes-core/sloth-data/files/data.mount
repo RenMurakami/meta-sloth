@@ -3,7 +3,12 @@ Description=Sloth data partition (settings, logs)
 After=systemd-repart.service
 
 [Mount]
-What=LABEL=sloth-data
+# The sloth-data partition of the disk Sloth booted from (sloth-bootdisk), not
+# LABEL=sloth-data.  Any other disk with a Sloth layout (the SD card of an
+# SD-machine board, a second Sloth disk) has the same label, and udev points
+# /dev/disk/by-label at whichever disk it probed last.  Mounting the wrong /data
+# would also take its /etc/ssh, Wi-Fi and Tailscale overlays.
+What=/dev/disk/sloth-boot/sloth-data
 Where=/data
 Type=ext4
 Options=defaults,noatime

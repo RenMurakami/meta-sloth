@@ -3,7 +3,8 @@ Description=Sloth recordings partition
 After=systemd-repart.service
 
 [Mount]
-What=LABEL=sloth-rec
+# The boot disk's sloth-rec partition, not LABEL=sloth-rec: see data.mount.
+What=/dev/disk/sloth-boot/sloth-rec
 Where=/rec
 Type=ext4
 Options=defaults,noatime
