@@ -1,0 +1,75 @@
+#!/bin/sh
+# Sloth rescue system: /init, running as PID 1.
+#
+# L4TLauncher boots this kernel + initramfs from the boot disk's "recovery"
+# partition when both rootfs slots are marked unbootable, or when the UEFI
+# boot option carries "bootmode=recovery" (the test entry, see the README).
+#
+# Everything runs from RAM.  Nothing here mounts or writes a disk: it only
+# brings up wired Ethernet, an SSH server (keys only) and login prompts on
+# the serial console and the screen, so the board can be looked at and
+# repaired.
+
+export PATH=/sbin:/bin:/usr/sbin:/usr/bin
+
+mount -t proc proc -o nosuid,nodev,noexec /proc
+mount -t sysfs sysfs -o nosuid,nodev,noexec /sys
+mount -t devtmpfs devtmpfs -o nosuid /dev
+mkdir -p /dev/pts /run /tmp
+mount -t devpts devpts -o nosuid,noexec,gid=5,mode=620 /dev/pts
+mount -t tmpfs tmpfs -o nosuid,nodev,mode=755 /run
+mount -t efivarfs efivarfs -o nosuid,nodev,noexec /sys/firmware/efi/efivars 2>/dev/null
+
+say() {
+    echo "sloth-rescue: $*"
+    echo "sloth-rescue: $*" > /dev/kmsg 2>/dev/null
+}
+
+hostname sloth-rescue
+
+# There is no init daemon, so busybox "reboot" sends SIGTERM to PID 1 and
+# expects it to do the rest.
+trap 'say "rebooting"; sync; umount -a -r 2>/dev/null; reboot -f' TERM INT
+
+# PCIe first: the NVMe and the r8168 Ethernet controller both sit behind it.
+for m in phy-tegra194-p2u pcie-tegra194 nvme r8168; do
+    modprobe "$m" 2>/dev/null || say "modprobe $m failed"
+done
+
+ip link set lo up
+n=0
+while [ ! -e /sys/class/net/eth0 ] && [ $n -lt 50 ]; do
+    sleep 0.2
+    n=$((n + 1))
+done
+if [ -e /sys/class/net/eth0 ]; then
+    ip link set eth0 up
+    # -b: keep trying in the background if no lease comes at once.
+    udhcpc -i eth0 -b -t 5 -T 3 -x hostname:sloth-rescue \
+        -s /etc/sloth-rescue/udhcpc.script >/dev/null 2>&1
+else
+    say "eth0 did not appear (r8168 not loaded?)"
+fi
+
+# Host keys are generated in RAM on every rescue boot (-R), so the key differs
+# from the normal system's.  Password logins are off (-s): keys only.
+mkdir -p /etc/dropbear
+dropbear -R -s -F -E -p 22 > /run/dropbear.log 2>&1 &
+
+respawn() {
+    while true; do
+        setsid "$@"
+        sleep 1
+    done
+}
+respawn getty -L 115200 ttyTCU0 vt100 &
+respawn getty 38400 tty1 &
+
+sleep 3
+say "ready: $(cat /run/sloth-rescue.ip 2>/dev/null || echo 'no IPv4 address yet') - ssh root@<address> (keys only)"
+
+# PID 1 has to reap orphans; "wait" with no job list reaps any child.
+while true; do
+    wait
+    sleep 1
+done

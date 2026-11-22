@@ -1,0 +1,27 @@
+#!/bin/sh
+# udhcpc hook for the Sloth rescue system.  busybox's default script expects
+# /usr/sbin/ip or ifconfig; the rescue initramfs only has busybox's "ip".
+case "$1" in
+    deconfig)
+        ip -4 addr flush dev "$interface"
+        ip link set dev "$interface" up
+        ;;
+    bound|renew)
+        ip -4 addr flush dev "$interface"
+        ip addr add "$ip/${mask:-24}" dev "$interface"
+        if [ -n "$router" ]; then
+            while ip route del default dev "$interface" 2>/dev/null; do :; done
+            for r in $router; do
+                ip route add default via "$r" dev "$interface"
+                break
+            done
+        fi
+        : > /etc/resolv.conf
+        [ -n "$domain" ] && echo "search $domain" >> /etc/resolv.conf
+        for d in $dns; do
+            echo "nameserver $d" >> /etc/resolv.conf
+        done
+        echo "$ip" > /run/sloth-rescue.ip
+        ;;
+esac
+exit 0

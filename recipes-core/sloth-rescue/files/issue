@@ -1,0 +1,7 @@
+
+  *** SLOTH RESCUE SYSTEM ***
+  Running from RAM (NVMe "recovery" partition).  The normal system did not
+  start: both rootfs slots failed, or the rescue boot entry was chosen.
+  Wired Ethernet + SSH (keys only) are up.  "reboot" returns to the normal
+  boot order.
+
