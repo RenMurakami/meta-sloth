@@ -179,3 +179,27 @@ IMAGE_ROOTFS_EXTRA_SPACE = "524288"
 # layer set without meta-swupdate.
 SLOTH_OTA_PACKAGES = "swupdate swupdate-client tegra-redundant-boot"
 IMAGE_INSTALL:append = " ${@bb.utils.contains('BBFILE_COLLECTIONS', 'swupdate', d.getVar('SLOTH_OTA_PACKAGES'), '', d)}"
+
+# ---------------------------------------------------------------------------
+# Rescue system in the recovery partition
+# ---------------------------------------------------------------------------
+# On machines that set SLOTH_RESCUE_IMAGE (sloth-orin-nano-nvme.conf), the
+# tegraflash bundle carries the rescue boot image as sloth-rescue.img, and the
+# external layout writes it to the "recovery" partition
+# (recipes-bsp/tegra-binaries/tegra-storage-layout_%.bbappend).  L4TLauncher
+# boots it when both rootfs slots are unbootable.  An OTA never rewrites the
+# recovery partition: the rescue system changes only with a full flash.
+SLOTH_RESCUE_IMAGE ??= ""
+SLOTH_RESCUE_BOOTIMG = "${DEPLOY_DIR_IMAGE}/${SLOTH_RESCUE_IMAGE}-${MACHINE}.cpio.gz.cboot"
+
+tegraflash_custom_pre:append() {
+    if [ -n "${SLOTH_RESCUE_IMAGE}" ]; then
+        size=$(stat -L -c %s "${SLOTH_RESCUE_BOOTIMG}")
+        if [ "$size" -gt "${TEGRA_RECOVERY_KERNEL_PART_SIZE}" ]; then
+            bbfatal "${SLOTH_RESCUE_BOOTIMG} is $size bytes, larger than the recovery partition (TEGRA_RECOVERY_KERNEL_PART_SIZE = ${TEGRA_RECOVERY_KERNEL_PART_SIZE}). make-sdcard would write past the partition end."
+        fi
+        cp -L "${SLOTH_RESCUE_BOOTIMG}" ./sloth-rescue.img
+    fi
+}
+do_image_tegraflash[depends] += "${@'%s:do_image_complete' % d.getVar('SLOTH_RESCUE_IMAGE') if d.getVar('SLOTH_RESCUE_IMAGE') else ''}"
+do_image_tegraflash[vardeps] += "SLOTH_RESCUE_IMAGE TEGRA_RECOVERY_KERNEL_PART_SIZE"

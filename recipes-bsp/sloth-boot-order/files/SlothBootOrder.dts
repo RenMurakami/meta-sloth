@@ -1,0 +1,33 @@
+/dts-v1/;
+/plugin/;
+
+/*
+ * UEFI default boot priority for the Sloth NVMe machine: the NVMe first,
+ * then the SD card.  Same shape as edk2-nvidia's BootOrderNvme.dts, with
+ * "sd" added.  See sloth-boot-order_1.0.bb.
+ */
+/ {
+	overlay-name = "Sloth UEFI boot order: nvme, then sd";
+
+	fragment@0 {
+		target-path = "/";
+		board_config {
+			sw-modules = "uefi";
+		};
+
+		__overlay__ {
+			firmware {
+				uefi {
+					variables {
+						gNVIDIATokenSpaceGuid {
+							DefaultBootPriority {
+								data = "nvme,sd";
+								locked;
+							};
+						};
+					};
+				};
+			};
+		};
+	};
+};
