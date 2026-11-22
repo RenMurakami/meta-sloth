@@ -136,6 +136,7 @@ IMAGE_INSTALL:append = " \
     sloth-wifi \
     sloth-tailscale \
     sloth-bootdisk \
+    sloth-watchdog \
     sloth-cuda-env \
     tensorrt-core \
     cuda-cudart \

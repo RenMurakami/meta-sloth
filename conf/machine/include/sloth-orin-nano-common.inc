@@ -14,6 +14,12 @@ OVERLAYFS_MOUNT_POINT[data] = "/data"
 # /data lives on the rootfs only.  Every initramfs image legitimately has no
 # /data mount, so the overlayfs QA check has nothing to verify there.
 
+# Reboot 10 s after a kernel panic.  The kernel is built with
+# CONFIG_PANIC_TIMEOUT=0 and would otherwise halt for good.  A/B fallback, and
+# the fall-back to the rescue system, only happen across reboots.  See
+# recipes-core/sloth-watchdog for the userspace half.
+KERNEL_ARGS:append = " panic=10"
+
 # The p3768 devkit's RJ45 is a Realtek RTL8168 on PCIe, not the Tegra EQOS
 # (meta-tegra p3768.inc: NVIDIA_ETHERNET = "nv-kernel-module-r8168").
 # meta-tegra only RRECOMMENDS it; require it and autoload it.
