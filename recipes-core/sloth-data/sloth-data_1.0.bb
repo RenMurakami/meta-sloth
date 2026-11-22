@@ -46,4 +46,6 @@ FILES:${PN} += " \
     /data \
     /rec \
 "
-RDEPENDS:${PN} = "systemd e2fsprogs-mke2fs"
+# sloth-bootdisk provides the /dev/disk/sloth-boot/ links data.mount and
+# rec.mount use.
+RDEPENDS:${PN} = "systemd e2fsprogs-mke2fs sloth-bootdisk"
