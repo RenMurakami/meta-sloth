@@ -1,0 +1,14 @@
+# Overlay: build for the NVMe product layout (sloth-orin-nano-nvme) instead of
+# the SD card.  Add it after either main file, separated by a colon:
+#
+#   cd /work
+#   SLOTH_SSH_AUTHORIZED_KEYS=/work/sloth-authorized_keys \
+#       kas build meta-sloth/kas/sloth-orin-nano.yml:meta-sloth/kas/machine-nvme.yml
+#
+# Both machines can share one build directory: work and deploy directories
+# are per machine (tmp/deploy/images/sloth-orin-nano-nvme/).
+
+header:
+  version: 14
+
+machine: sloth-orin-nano-nvme

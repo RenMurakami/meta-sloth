@@ -1,6 +1,6 @@
 SUMMARY = "Stable /dev/disk/sloth-boot/<partition name> links for the boot disk"
 DESCRIPTION = "udev rule naming the partitions of the disk the rootfs boots from. \
-by-partlabel is ambiguous because JetPack's NVMe uses the same partition names."
+by-partlabel is ambiguous because the JetPack disk uses the same partition names."
 LICENSE = "MIT"
 LIC_FILES_CHKSUM = "file://${COMMON_LICENSE_DIR}/MIT;md5=0835ade698e0bcf8506ecda2f7b4f302"
 

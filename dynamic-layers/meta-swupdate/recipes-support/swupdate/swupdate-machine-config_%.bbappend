@@ -1,6 +1,6 @@
 # swupdate-genconfig (run before swupdate.service starts) mounts the other
 # rootfs slot to read its sw-versions, by /dev/disk/by-partlabel/APP{,_b}.
-# On this board that name can resolve to JetPack's NVMe; use the boot-disk
+# On this board that name can resolve to the JetPack disk; use the boot-disk
 # links from recipes-core/sloth-bootdisk instead.
 do_compile:append() {
     sed -i -e 's,/dev/disk/by-partlabel/,/dev/disk/sloth-boot/,' ${B}/swupdate-genconfig.sh

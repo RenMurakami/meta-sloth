@@ -42,6 +42,6 @@ MACHINE_ESSENTIAL_EXTRA_RDEPENDS += "nv-kernel-module-rtl8822ce tegra-firmware-r
 # the JetPack (SDK Manager) flash that put the QSPI firmware on this board:
 #   3767--0005--1--jetson-orin-nano-devkit-super-
 # The machine name is part of it, so capsules built under the default
-# TNSPEC_MACHINE (= MACHINE = sloth-orin-nano-sd) would never match and every
+# TNSPEC_MACHINE (= MACHINE, e.g. sloth-orin-nano-sd) would never match and every
 # bootloader update - and with it every A/B slot switch - would fail.
 TNSPEC_MACHINE = "jetson-orin-nano-devkit-super"

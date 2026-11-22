@@ -11,6 +11,6 @@
 require dynamic-layers/meta-swupdate/recipes-demo/images/swupdate-image-tegra-common.inc
 
 # Where sw-description finds APP and APP_b.  The default, by-partlabel, can
-# resolve to the APP partition of JetPack's NVMe - an update from slot B
+# resolve to the APP partition of the JetPack disk - an update from slot B
 # would then overwrite JetPack.  See recipes-core/sloth-bootdisk.
 ROOTFS_DEVICE_PATH = "/dev/disk/sloth-boot"

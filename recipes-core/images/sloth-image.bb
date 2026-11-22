@@ -156,13 +156,37 @@ IMAGE_INSTALL:append = " \
     e2fsprogs-tune2fs \
     pciutils \
     usbutils \
+    efibootmgr \
 "
+# efibootmgr: read and fix the UEFI boot order (NVMe first; sloth-target-check
+# reads it), and boot the rescue system once with BootNext (see the README).
 
-# The rootfs grows to the 14 GiB partition on first boot (x-systemd.growfs, see
-# recipes-core/base-files/base-files_%.bbappend), so the built image only needs
-# enough slack to boot once.  Padding it here would only make the .img bigger
-# and every dd and swupdate payload slower.
+# ---------------------------------------------------------------------------
+# Rootfs size
+# ---------------------------------------------------------------------------
+# The rootfs grows to fill its slot (ROOTFSPART_SIZE: 14 GiB on the SD
+# machine, 48 GiB on the NVMe one) on first boot (x-systemd.growfs, see
+# recipes-core/base-files/base-files_%.bbappend).  An OTA formats the whole
+# slot (sw-description diskformat).  So the built image only needs enough slack
+# to boot once.  Padding it here would only make the .img bigger and every dd
+# and swupdate payload slower.
 IMAGE_ROOTFS_EXTRA_SPACE = "524288"
+
+# Size the ext4 image from its content:
+#   content x IMAGE_OVERHEAD_FACTOR (1.3) + IMAGE_ROOTFS_EXTRA_SPACE
+# core-image-minimal.bb already sets IMAGE_ROOTFS_SIZE ?= "8192".  That only
+# beats meta-tegra's IMAGE_ROOTFS_SIZE ?= <whole partition> because
+# image_types_tegra is inherited late (inherit_defer).  Setting it here keeps
+# the result from depending on that ordering.
+IMAGE_ROOTFS_SIZE = "8192"
+
+# Stop the build when the rootfs no longer fits its slot.  Without this, an
+# oversized image only shows up on the board, as an OTA that fails halfway
+# through writing the inactive slot.  It is checked against the computed image
+# size above, so the 1.3 overhead factor makes it trip a little early.  If it
+# trips, grow ROOTFSPART_SIZE_DEFAULT in the machine config.  On a board that
+# is already deployed, that means a USB-recovery reflash.
+IMAGE_ROOTFS_MAXSIZE = "${@int(d.getVar('ROOTFSPART_SIZE')) // 1024}"
 
 # ---------------------------------------------------------------------------
 # OTA (SWUpdate, A/B rootfs + bootloader capsule)

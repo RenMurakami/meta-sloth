@@ -1,11 +1,12 @@
 # Grow the rootfs to fill its partition on first boot.
 #
-# The image is sized to content + IMAGE_ROOTFS_EXTRA_SPACE (~4 GiB of ext4)
-# but the APP partition is 14 GiB, fixed by flash_t234_qspi_sd_rootfs_ab.xml,
-# so ~10 GiB was unreachable - D8-VERIFICATION-2026-09-13.md gap 1 measured
-# 2.0 G available on a 14 GiB partition.
+# The image is sized to its content plus IMAGE_ROOTFS_EXTRA_SPACE (see
+# sloth-image.bb).  The APP partition is ROOTFSPART_SIZE (14 GiB on the SD
+# machine, 48 GiB on the NVMe one).  Before this, most of the partition was
+# unreachable: D8-VERIFICATION-2026-09-13.md gap 1 measured 2.0 G available
+# on a 14 GiB partition.
 #
-# Growing at boot rather than baking a 14 GiB rootfs keeps the .img small
+# Growing at boot rather than baking a full-slot rootfs keeps the .img small
 # (fast dd, small swupdate payloads) and makes a fresh rootfs written to APP_b
 # by an OTA grow itself the same way.  It stops at the partition edge: the
 # rest of the disk becomes /data and /rec, which systemd-repart creates on
