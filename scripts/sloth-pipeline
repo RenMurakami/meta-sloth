@@ -1,0 +1,823 @@
+#!/usr/bin/env python3
+"""sloth-pipeline - build, check and archive Sloth builds.
+
+Validation pipeline, phase A: no board needed.  Run it on the build host (WSL
+or Linux), not inside the build container: the archive is a host directory
+the container does not mount.
+
+  sloth-pipeline build [--image both|prod|dev] [--tegraflash]
+      Give the build an ID, build the .swu of each image with kas in the
+      yocto-jetson-buildenv container, run Gate 1 on each .swu and copy the
+      results to $SLOTH_ARCHIVE/<ID>/.  Exit status 0 only if every image
+      passed Gate 1.
+  sloth-pipeline check <ID>
+      Run Gate 1 again on an archived build (after Gate 1 itself changed).
+  sloth-pipeline list
+      One line per archived build.
+
+Environment (only SLOTH_ARCHIVE is required):
+  SLOTH_ARCHIVE         the archive directory.  On WSL put it on a Windows
+                        drive (e.g. /mnt/r/sloth/builds): the WSL disk does
+                        not shrink when old builds are deleted.
+  SLOTH_WORKSPACE       directory holding meta-sloth, docker/ and the build
+                        directory.  Default: the directory above meta-sloth.
+  SLOTH_KAS_CONFIG      default: meta-sloth/kas/sloth-orin-nano.yml:meta-sloth/kas/machine-nvme.yml
+  SLOTH_KAS_BUILD_DIR   default: build-sloth (inside the workspace)
+  SLOTH_MACHINE         default: sloth-orin-nano-nvme (the machine of SLOTH_KAS_CONFIG)
+  SLOTH_SSH_AUTHORIZED_KEYS, SLOTH_ROOT_PASSWORD_HASH_FILE
+                        default: <workspace>/sloth-authorized_keys and
+                        <workspace>/sloth-root-password.hash.  Both must be
+                        inside the workspace, which the container sees as /work.
+
+Each .swu holds the root password hash: keep the archive private.
+"""
+
+import argparse
+import datetime
+import fcntl
+import hashlib
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+import tarfile
+import time
+from pathlib import Path
+
+IMAGES = {"prod": "sloth-image", "dev": "sloth-image-dev"}
+ARCHIVE_FORMAT = 1
+
+# F2: with any other TNSPEC_MACHINE, UEFI rejects the bootloader capsule.
+TNSPEC_MACHINE = "jetson-orin-nano-devkit-super"
+# Bench tools that sloth-image must not ship (sloth-image-dev adds them).
+BENCH_PACKAGES = ("gdb", "strace")
+# Warn when a .swu grows or shrinks by more than this against the last build.
+SIZE_WARN = 0.15
+# Free space the archive needs before a build starts.
+MIN_FREE = 10 * 1024**3
+
+# Rootfs files Gate 1 reads (paths without the leading "./").
+READ_FILES = ("etc/buildinfo", "etc/shadow", "etc/hwrevision", "root/.ssh/authorized_keys")
+# Rootfs files Gate 1 only needs to exist.  usrmerge puts /lib under /usr/lib.
+EXIST_FILES = {
+    "wifi": ("usr/lib/firmware/rtl8822_setting.bin", "lib/firmware/rtl8822_setting.bin"),
+    "bootdisk": ("usr/lib/udev/rules.d/61-sloth-bootdisk.rules",
+                 "lib/udev/rules.d/61-sloth-bootdisk.rules"),
+    "hardening": ("etc/ssh/sshd_config.d/10-sloth-hardening.conf",),
+}
+
+
+def die(msg):
+    print(f"sloth-pipeline: {msg}", file=sys.stderr)
+    sys.exit(2)
+
+
+def human(n):
+    for unit in ("B", "KB", "MB", "GB", "TB"):
+        if n < 1000 or unit == "TB":
+            return f"{n:.0f} {unit}" if unit == "B" else f"{n:.2f} {unit}"
+        n /= 1000
+    return str(n)
+
+
+# ---------------------------------------------------------------------------
+# Configuration
+# ---------------------------------------------------------------------------
+
+class Config:
+    def __init__(self, need_build=False):
+        default_ws = Path(__file__).resolve().parent.parent.parent
+        self.ws = Path(os.environ.get("SLOTH_WORKSPACE", default_ws)).resolve()
+
+        archive = os.environ.get("SLOTH_ARCHIVE")
+        if not archive:
+            die("SLOTH_ARCHIVE is not set.  Example for WSL (add it to ~/.bashrc):\n"
+                "  export SLOTH_ARCHIVE=/mnt/r/sloth/builds")
+        self.archive = Path(archive)
+
+        self.machine = os.environ.get("SLOTH_MACHINE", "sloth-orin-nano-nvme")
+        self.kas_config = os.environ.get(
+            "SLOTH_KAS_CONFIG",
+            "meta-sloth/kas/sloth-orin-nano.yml:meta-sloth/kas/machine-nvme.yml")
+        self.build_dir = self.inside_ws(os.environ.get("SLOTH_KAS_BUILD_DIR", "build-sloth"),
+                                        "SLOTH_KAS_BUILD_DIR")
+        self.deploy = self.build_dir / "tmp" / "deploy" / "images" / self.machine
+        self.keys = self.inside_ws(os.environ.get("SLOTH_SSH_AUTHORIZED_KEYS",
+                                                  "sloth-authorized_keys"),
+                                   "SLOTH_SSH_AUTHORIZED_KEYS")
+        self.pwhash = self.inside_ws(os.environ.get("SLOTH_ROOT_PASSWORD_HASH_FILE",
+                                                    "sloth-root-password.hash"),
+                                     "SLOTH_ROOT_PASSWORD_HASH_FILE")
+        self.docker_image = os.environ.get("YOCTO_IMAGE", "yocto-jetson:wrynose")
+
+        if need_build:
+            self.check_build_inputs()
+
+    def inside_ws(self, value, name):
+        # Accept the container spelling too (/work/... is the workspace there),
+        # since the same variables are exported for kas inside the container.
+        if value == "/work" or value.startswith("/work/"):
+            value = str(self.ws / value[len("/work/"):])
+        p = Path(value)
+        p = (p if p.is_absolute() else self.ws / p).resolve()
+        try:
+            p.relative_to(self.ws)
+        except ValueError:
+            die(f"{name} = {value} is outside the workspace {self.ws}; "
+                f"the build container only sees the workspace (as /work)")
+        return p
+
+    def in_container(self, p):
+        return "/work/" + str(p.relative_to(self.ws))
+
+    def check_build_inputs(self):
+        if not shutil.which("docker"):
+            die("docker not found")
+        if not (self.ws / "docker" / "yocto-shell.sh").exists():
+            die(f"{self.ws}/docker/yocto-shell.sh not found (is SLOTH_WORKSPACE right?)")
+        for part in self.kas_config.split(":"):
+            if not (self.ws / part).is_file():
+                die(f"kas file {part} not found in {self.ws}")
+        for p, name in ((self.keys, "SLOTH_SSH_AUTHORIZED_KEYS"),
+                        (self.pwhash, "SLOTH_ROOT_PASSWORD_HASH_FILE")):
+            if not p.is_file():
+                die(f"{name}: {p} not found.  The pipeline builds both images with a "
+                    f"root key and a root password; see meta-sloth/README.md, "
+                    f"'Secrets for a build'.")
+        if not self.archive.is_dir():
+            die(f"archive {self.archive} does not exist; create it first "
+                f"(mkdir -p {self.archive})")
+        free = shutil.disk_usage(self.archive).free
+        if free < MIN_FREE:
+            die(f"only {human(free)} free in {self.archive}; a build needs about 4 GB "
+                f"(more with --tegraflash)")
+
+
+# ---------------------------------------------------------------------------
+# Git state
+# ---------------------------------------------------------------------------
+
+# (name in build.json, path in the workspace, count untracked files as dirty)
+REPOS = (
+    ("meta-sloth", "meta-sloth", True),
+    ("yocto-jetson-buildenv", "yocto-jetson-buildenv", True),
+    ("tegra-demo-distro", "tegra-demo-distro", False),
+    ("workspace", ".", False),
+)
+
+
+def git(repo, *args, binary=False):
+    r = subprocess.run(["git", "-C", str(repo), *args], capture_output=True,
+                       text=not binary)
+    if r.returncode != 0:
+        return None
+    return r.stdout if binary else r.stdout.strip()
+
+
+def repo_state(path, untracked):
+    if git(path, "rev-parse", "--git-dir") is None:
+        return None
+    status = git(path, "status", "--porcelain",
+                 "--untracked-files=" + ("normal" if untracked else "no"))
+    commit = git(path, "rev-parse", "HEAD") or ""
+    return {
+        "commit": commit,
+        "short": commit[:7],
+        "branch": git(path, "rev-parse", "--abbrev-ref", "HEAD"),
+        "dirty": bool(status),
+    }
+
+
+def save_dirty_state(name, path, untracked, dest):
+    """Keep what is not committed, so a dirty build can be rebuilt exactly."""
+    saved = []
+    diff = git(path, "diff", "HEAD", "--binary", binary=True)
+    if diff:
+        (dest / f"{name}.diff").write_bytes(diff)
+        saved.append(f"{name}.diff")
+    if untracked:
+        files = (git(path, "ls-files", "--others", "--exclude-standard", "-z") or "")
+        files = [f for f in files.split("\0") if f]
+        if files:
+            with tarfile.open(dest / f"{name}-untracked.tar", "w") as t:
+                for f in files:
+                    t.add(path / f, arcname=f)
+            saved.append(f"{name}-untracked.tar")
+    return saved
+
+
+# ---------------------------------------------------------------------------
+# Reading a .swu (a newc cpio archive)
+# ---------------------------------------------------------------------------
+
+def _pad4(n):
+    return (n + 3) & ~3
+
+
+def cpio_members(f):
+    """Return {name: (offset, size)} for the members of a newc cpio archive."""
+    members = {}
+    pos = 0
+    while True:
+        f.seek(pos)
+        hdr = f.read(110)
+        if len(hdr) < 110 or hdr[:6] not in (b"070701", b"070702"):
+            raise ValueError(f"not a .swu (newc cpio) archive: bad header at offset {pos}")
+        size = int(hdr[54:62], 16)
+        namesize = int(hdr[94:102], 16)
+        name = f.read(namesize)[:-1].decode()
+        data = pos + _pad4(110 + namesize)
+        if name == "TRAILER!!!":
+            return members
+        members[name] = (data, size)
+        pos = _pad4(data + size)
+
+
+class MemberReader:
+    """File-like view of one cpio member that hashes what it reads."""
+
+    def __init__(self, f, offset, size):
+        f.seek(offset)
+        self.f = f
+        self.left = size
+        self.sha = hashlib.sha256()
+
+    def read(self, n=-1):
+        if n is None or n < 0 or n > self.left:
+            n = self.left
+        b = self.f.read(n)
+        self.left -= len(b)
+        self.sha.update(b)
+        return b
+
+    def finish(self):
+        while self.left:
+            if not self.read(8 << 20):
+                break
+        return self.sha.hexdigest()
+
+
+def scan_rootfs(reader):
+    """Read the few rootfs files Gate 1 needs from a streamed .tar.gz."""
+    found = {}
+    with tarfile.open(fileobj=reader, mode="r|gz") as t:
+        for m in t:
+            name = m.name[2:] if m.name.startswith("./") else m.name
+            wanted_exist = any(name in paths for paths in EXIST_FILES.values())
+            if name in READ_FILES or wanted_exist:
+                info = {"mode": m.mode, "isfile": m.isfile(), "size": m.size}
+                if name in READ_FILES and m.isfile():
+                    info["data"] = t.extractfile(m).read()
+                found[name] = info
+    return found
+
+
+def root_password_state(shadow):
+    """'set', 'locked', 'empty' or 'missing'.  Never returns the hash."""
+    for line in shadow.decode(errors="replace").splitlines():
+        fields = line.split(":")
+        if fields[0] == "root" and len(fields) > 1:
+            pw = fields[1]
+            if pw == "":
+                return "empty"
+            if pw[0] in "!*":
+                return "locked"
+            return "set"
+    return "missing"
+
+
+def parse_buildinfo(data):
+    out = {}
+    for line in data.decode(errors="replace").splitlines():
+        k, sep, v = line.partition(" = ")
+        if sep and re.fullmatch(r"[A-Z0-9_]+", k.strip()):
+            out[k.strip()] = v.strip()
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Gate 1
+# ---------------------------------------------------------------------------
+
+def gate1(files, exp):
+    """Check one image's .swu, manifest and testdata.json before any board.
+
+    files: {"swu", "manifest", "testdata"} -> Path
+    exp:   id, kind, image, machine, keys_file, prev (size, id) or None
+    Returns a list of {"check", "result", "detail"}; result is PASS, WARN,
+    FAIL or INFO.
+    """
+    results = []
+
+    def add(check, result, detail=""):
+        results.append({"check": check, "result": result, "detail": detail})
+
+    machine, image, kind = exp["machine"], exp["image"], exp["kind"]
+    rootfs_name = f"{image}-{machine}.rootfs.tar.gz"
+    esp_name = f"tegra-espimage-{machine}.tar.gz"
+
+    with open(files["swu"], "rb", buffering=1 << 20) as f:
+        try:
+            members = cpio_members(f)
+        except ValueError as e:
+            add(".swu archive", "FAIL", str(e))
+            return results
+
+        # Contents.  The ESP archive is only there with TEGRA_MINIMAL_BOOT = "0" (F3).
+        required = ["sw-description", rootfs_name, "tegra-bl.cap",
+                    "tegra-swupdate-script.lua", esp_name]
+        missing = [n for n in required if n not in members]
+        if missing:
+            add(".swu contents", "FAIL", "missing: " + ", ".join(missing))
+        else:
+            add(".swu contents", "PASS", "rootfs, capsule, ESP (L4TLauncher), Lua script")
+
+        swdesc = ""
+        if "sw-description" in members:
+            off, size = members["sw-description"]
+            f.seek(off)
+            swdesc = f.read(size).decode(errors="replace")
+
+        if re.search(rf"^\s*{re.escape(machine)}\s*=\s*\{{", swdesc, re.M):
+            add("sw-description machine", "PASS", machine)
+        else:
+            add("sw-description machine", "FAIL",
+                f"not built for {machine}; SWUpdate on the board would refuse it")
+
+        # F4: the slots must come from sloth-bootdisk's links, never by-partlabel.
+        if "by-partlabel" in swdesc or "/dev/disk/sloth-boot/APP" not in swdesc:
+            add("sw-description slots (F4)", "FAIL",
+                "slots not taken from /dev/disk/sloth-boot (ROOTFS_DEVICE_PATH)")
+        else:
+            add("sw-description slots (F4)", "PASS", "/dev/disk/sloth-boot/APP and APP_b")
+
+        # Checksums that SWUpdate verifies on the board, checked here first.
+        sums = dict(re.findall(
+            r'filename\s*=\s*"([^"]+)"\s*;[^{}]*?sha256\s*=\s*"([0-9a-fA-F]{64})"',
+            swdesc, re.S))
+        found = {}
+        rootfs_sha = None
+        if rootfs_name in members:
+            print(f"  reading the {image} rootfs from the .swu "
+                  f"({human(members[rootfs_name][1])}) ...", flush=True)
+            reader = MemberReader(f, *members[rootfs_name])
+            try:
+                found = scan_rootfs(reader)
+            except (tarfile.TarError, OSError, EOFError) as e:
+                add("rootfs archive", "FAIL", f"cannot read {rootfs_name}: {e}")
+            rootfs_sha = reader.finish()
+        bad = []
+        if "$swupdate_get_sha256" in swdesc:
+            bad.append("unexpanded $swupdate_get_sha256")
+        for name, want in sums.items():
+            if name == rootfs_name:
+                got = rootfs_sha
+            elif name in members:
+                got = MemberReader(f, *members[name]).finish()
+            else:
+                got = None
+            if got != want.lower():
+                bad.append(name)
+        if bad or not sums:
+            add("payload checksums", "FAIL",
+                ("mismatch: " + ", ".join(bad)) if bad else "no sha256 in sw-description")
+        else:
+            add("payload checksums", "PASS", f"{len(sums)} sha256 match sw-description")
+
+    def data(name):
+        return found.get(name, {}).get("data")
+
+    def exists(key):
+        return any(found.get(p, {}).get("isfile") for p in EXIST_FILES[key])
+
+    # Build identity.
+    bi = parse_buildinfo(data("etc/buildinfo")) if data("etc/buildinfo") else None
+    if bi is None:
+        add("build ID", "FAIL", "/etc/buildinfo missing")
+    else:
+        got = (bi.get("SLOTH_BUILD_ID"), bi.get("IMAGE_BASENAME"), bi.get("MACHINE"))
+        want = (exp["id"], image, machine)
+        if got == want:
+            add("build ID", "PASS", " / ".join(want))
+        else:
+            add("build ID", "FAIL", "rootfs says " + " / ".join(str(x) for x in got)
+                + "; this is not the image just built")
+        add("L4T version", "INFO", bi.get("L4T_VERSION") or "? (not in /etc/buildinfo)")
+
+    # Root login.  With Tailscale the board is reachable from outside the LAN,
+    # so an empty root password is never acceptable, not even on the dev image.
+    shadow = data("etc/shadow")
+    pw = root_password_state(shadow) if shadow else "missing"
+    if pw == "set":
+        add("root password", "PASS", "set (hash not shown)")
+    elif pw == "locked":
+        add("root password", "WARN", "locked: key login only")
+    elif pw == "empty":
+        add("root password", "FAIL", "EMPTY: anyone who reaches the board logs in as root")
+    else:
+        add("root password", "FAIL", "no root entry in /etc/shadow")
+
+    ak = found.get("root/.ssh/authorized_keys")
+    if not ak or not ak.get("isfile"):
+        add("root authorized_keys", "FAIL" if kind == "prod" else "WARN",
+            "missing" + (": the board would be unreachable" if kind == "prod" else ""))
+    elif ak["mode"] & 0o777 != 0o600:
+        add("root authorized_keys", "FAIL", f"mode {ak['mode'] & 0o777:o}; sshd wants 600")
+    elif exp.get("keys_file") and exp["keys_file"].is_file() \
+            and ak["data"].strip() != exp["keys_file"].read_bytes().strip():
+        add("root authorized_keys", "FAIL", f"differs from {exp['keys_file'].name}")
+    else:
+        n = len([l for l in ak["data"].splitlines() if l.strip()])
+        add("root authorized_keys", "PASS", f"{n} key(s), mode 600")
+
+    if kind == "prod":
+        if exists("hardening"):
+            add("sshd policy", "PASS", "keys only, password from LAN/tailnet (W3)")
+        else:
+            add("sshd policy", "FAIL", "10-sloth-hardening.conf missing")
+    else:
+        add("sshd policy", "INFO", "open login (bench image, by design)")
+
+    # Regressions of earlier failures.
+    if exists("wifi"):
+        add("Wi-Fi setting file (F5)", "PASS", "rtl8822_setting.bin")
+    else:
+        add("Wi-Fi setting file (F5)", "FAIL", "rtl8822_setting.bin missing: no Wi-Fi")
+    if exists("bootdisk"):
+        add("boot-disk links (F4)", "PASS", "61-sloth-bootdisk.rules")
+    else:
+        add("boot-disk links (F4)", "FAIL", "61-sloth-bootdisk.rules missing")
+
+    hw = (data("etc/hwrevision") or b"").split()
+    if hw[:1] == [machine.encode()]:
+        add("hwrevision", "PASS", f"{machine}: the next .swu will be accepted")
+    else:
+        add("hwrevision", "FAIL",
+            f"/etc/hwrevision does not name {machine}; later OTA updates would be refused")
+
+    # Build settings recorded with the image.
+    try:
+        td = json.loads(Path(files["testdata"]).read_text())
+    except (OSError, ValueError) as e:
+        add("build settings", "FAIL", f"testdata.json unreadable: {e}")
+    else:
+        if td.get("TNSPEC_MACHINE") == TNSPEC_MACHINE:
+            add("TNSPEC_MACHINE (F2)", "PASS", TNSPEC_MACHINE)
+        else:
+            add("TNSPEC_MACHINE (F2)", "FAIL",
+                f"{td.get('TNSPEC_MACHINE')}; UEFI would reject the capsule")
+        if td.get("TEGRA_MINIMAL_BOOT") == "0":
+            add("TEGRA_MINIMAL_BOOT (F3)", "PASS", "0")
+        else:
+            add("TEGRA_MINIMAL_BOOT (F3)", "FAIL", f"{td.get('TEGRA_MINIMAL_BOOT')}; must be 0")
+
+    if kind == "prod":
+        try:
+            pkgs = {l.split()[0] for l in Path(files["manifest"]).read_text().splitlines()
+                    if l.strip()}
+        except OSError as e:
+            add("no bench tools", "FAIL", f"manifest unreadable: {e}")
+        else:
+            bench = sorted(p for p in BENCH_PACKAGES if p in pkgs)
+            if bench:
+                add("no bench tools", "FAIL", "sloth-image ships " + ", ".join(bench))
+            else:
+                add("no bench tools", "PASS", ", ".join(BENCH_PACKAGES) + " absent")
+
+    size = Path(files["swu"]).stat().st_size
+    prev = exp.get("prev")
+    if not prev:
+        add(".swu size", "INFO", f"{human(size)} (no earlier build to compare)")
+    else:
+        change = size / prev[0] - 1
+        detail = f"{human(prev[0])} -> {human(size)} ({change:+.0%}) since {prev[1]}"
+        add(".swu size", "WARN" if abs(change) > SIZE_WARN else "PASS", detail)
+
+    return results
+
+
+def gate1_verdict(results):
+    return "fail" if any(r["result"] == "FAIL" for r in results) else "pass"
+
+
+def gate1_report(kind, image, results):
+    fails = sum(r["result"] == "FAIL" for r in results)
+    warns = sum(r["result"] == "WARN" for r in results)
+    lines = [f"Gate 1  {image} ({kind})"]
+    for r in results:
+        lines.append(f"  {r['result']:<5} {r['check']:<26} {r['detail']}")
+    verdict = "FAIL" if fails else "PASS"
+    lines.append(f"  => {verdict} ({fails} FAIL, {warns} WARN)")
+    return "\n".join(lines) + "\n"
+
+
+# ---------------------------------------------------------------------------
+# Archive
+# ---------------------------------------------------------------------------
+
+def load_builds(archive):
+    builds = []
+    for d in sorted(archive.iterdir()) if archive.is_dir() else []:
+        bj = d / "build.json"
+        # .incomplete-<ID>: a build still running or interrupted.
+        if d.is_dir() and not d.name.startswith(".") and bj.is_file():
+            try:
+                builds.append(json.loads(bj.read_text()))
+            except ValueError:
+                pass
+    return builds
+
+
+def previous_size(archive, kind, before_id):
+    """(swu size, build ID) of the newest earlier build that has this image."""
+    for b in reversed(load_builds(archive)):
+        if b["id"] >= before_id:
+            continue
+        img = b.get("images", {}).get(kind)
+        if img and img.get("swu_size"):
+            return (img["swu_size"], b["id"])
+    return None
+
+
+def copy_hashed(src, dst):
+    h = hashlib.sha256()
+    with open(src, "rb") as fi, open(dst, "wb") as fo:
+        while True:
+            b = fi.read(8 << 20)
+            if not b:
+                break
+            h.update(b)
+            fo.write(b)
+    if dst.stat().st_size != Path(src).stat().st_size:
+        raise OSError(f"short copy: {dst}")
+    return h.hexdigest()
+
+
+def write_json(path, obj):
+    tmp = path.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(obj, indent=2) + "\n")
+    os.replace(tmp, path)
+
+
+def deploy_files(cfg, image):
+    base = f"{image}-{cfg.machine}"
+    return {
+        "swu": cfg.deploy / f"{base}.swu",
+        "manifest": cfg.deploy / f"{base}.rootfs.manifest",
+        "spdx": cfg.deploy / f"{base}.rootfs.spdx.json",
+        "testdata": cfg.deploy / f"{base}.rootfs.testdata.json",
+        "tegraflash": cfg.deploy / f"{base}.rootfs.tegraflash-tar.zst",
+    }
+
+
+# ---------------------------------------------------------------------------
+# Commands
+# ---------------------------------------------------------------------------
+
+def run_kas(cfg, build_id, targets, log_path):
+    cmd = [str(cfg.ws / "docker" / "yocto-shell.sh"), "env",
+           f"SLOTH_BUILD_ID={build_id}",
+           f"KAS_BUILD_DIR={cfg.in_container(cfg.build_dir)}",
+           f"SLOTH_SSH_AUTHORIZED_KEYS={cfg.in_container(cfg.keys)}",
+           f"SLOTH_ROOT_PASSWORD_HASH_FILE={cfg.in_container(cfg.pwhash)}",
+           "kas", "build", cfg.kas_config]
+    for t in targets:
+        cmd += ["--target", t]
+    env = dict(os.environ, YOCTO_WORK=str(cfg.ws), YOCTO_IMAGE=cfg.docker_image)
+    # Line-buffered, so the log is current while the build runs (and after a crash).
+    with open(log_path, "w", buffering=1) as log:
+        log.write("$ " + " ".join(cmd) + "\n")
+        proc = subprocess.Popen(cmd, cwd=cfg.ws, env=env, stdout=subprocess.PIPE,
+                                stderr=subprocess.STDOUT, text=True, errors="replace")
+        try:
+            for line in proc.stdout:
+                sys.stdout.write(line)
+                sys.stdout.flush()
+                log.write(line)
+            return proc.wait()
+        except KeyboardInterrupt:
+            print("\nsloth-pipeline: interrupted, waiting for the build to stop ...",
+                  file=sys.stderr)
+            proc.wait()
+            log.write("\n[interrupted]\n")
+            return 130
+
+
+def cmd_build(args):
+    cfg = Config(need_build=True)
+    kinds = ["prod", "dev"] if args.image == "both" else [args.image]
+
+    cfg.build_dir.mkdir(parents=True, exist_ok=True)
+    lock = open(cfg.build_dir / ".sloth-pipeline.lock", "w")
+    try:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        die(f"another sloth-pipeline build is using {cfg.build_dir}")
+
+    repos = {}
+    for name, rel, untracked in REPOS:
+        state = repo_state(cfg.ws / rel, untracked)
+        if state:
+            repos[name] = state
+    if "meta-sloth" not in repos:
+        die(f"{cfg.ws}/meta-sloth is not a git checkout")
+    dirty = any(repos[n]["dirty"] for n in ("meta-sloth", "tegra-demo-distro") if n in repos)
+
+    started = datetime.datetime.now()
+    build_id = f"{started:%Y%m%d-%H%M}-{repos['meta-sloth']['short']}" + ("-dirty" if dirty else "")
+    n = 2
+    base_id = build_id
+    while (cfg.archive / build_id).exists():
+        build_id = f"{base_id}.{n}"
+        n += 1
+
+    stage = cfg.archive / f".incomplete-{build_id}"
+    stage.mkdir()
+    saved = []
+    for name, rel, untracked in REPOS:
+        if repos.get(name, {}).get("dirty"):
+            saved += save_dirty_state(name, cfg.ws / rel, untracked, stage)
+
+    docker_id = subprocess.run(
+        ["docker", "image", "inspect", "--format", "{{.Id}}", cfg.docker_image],
+        capture_output=True, text=True).stdout.strip()
+
+    record = {
+        "format": ARCHIVE_FORMAT,
+        "id": build_id,
+        "status": "building",
+        "started": started.isoformat(timespec="seconds"),
+        "machine": cfg.machine,
+        "kas_config": cfg.kas_config,
+        "docker_image": {"name": cfg.docker_image, "id": docker_id},
+        "repos": repos,
+        "dirty_state_files": saved,
+        "images": {},
+    }
+    write_json(stage / "build.json", record)
+
+    print(f"sloth-pipeline: build {build_id}  ({', '.join(IMAGES[k] for k in kinds)})")
+    if dirty:
+        print("  uncommitted changes are built; saved as " + ", ".join(saved))
+    t0 = time.monotonic()
+    rc = run_kas(cfg, build_id, [f"{IMAGES[k]}-swupdate" for k in kinds], stage / "build.log")
+    record["kas_exit"] = rc
+    record["build_seconds"] = round(time.monotonic() - t0)
+
+    if rc != 0:
+        record["status"] = "failed"
+        record["failure"] = f"kas exited with {rc}; see build.log"
+        record["finished"] = datetime.datetime.now().isoformat(timespec="seconds")
+        write_json(stage / "build.json", record)
+        os.rename(stage, cfg.archive / build_id)
+        print(f"\nsloth-pipeline: {build_id}: build FAILED (kas exit {rc}). "
+              f"Log: {cfg.archive / build_id / 'build.log'}")
+        return 1
+
+    all_pass = True
+    sums = []
+    for kind in kinds:
+        image = IMAGES[kind]
+        src = deploy_files(cfg, image)
+        missing = [k for k in ("swu", "manifest", "testdata") if not src[k].exists()]
+        img = {"image": image}
+        if missing:
+            results = [{"check": "build outputs", "result": "FAIL",
+                        "detail": "missing in the deploy directory: " + ", ".join(missing)}]
+        else:
+            print(f"\nGate 1: {image}")
+            results = gate1(src, {
+                "id": build_id, "kind": kind, "image": image, "machine": cfg.machine,
+                "keys_file": cfg.keys, "prev": previous_size(cfg.archive, kind, build_id),
+            })
+        report = gate1_report(kind, image, results)
+        print(report, end="")
+        (stage / f"gate1-{kind}.txt").write_text(report)
+        img["gate1"] = {"verdict": gate1_verdict(results), "results": results}
+        img["status"] = "checked" if img["gate1"]["verdict"] == "pass" else "failed"
+        all_pass &= img["status"] == "checked"
+
+        # Copy what the pipeline needs later.  The rootfs tarball is inside
+        # the .swu; the tegraflash bundle (2.5 GB) only with --tegraflash.
+        img["files"] = {}
+        wanted = ["swu", "manifest", "spdx", "testdata"] + (["tegraflash"] if args.tegraflash else [])
+        for key in wanted:
+            if not src[key].exists():
+                continue
+            dst = stage / src[key].name
+            print(f"  archiving {dst.name} ({human(src[key].stat().st_size)})", flush=True)
+            sums.append(f"{copy_hashed(src[key], dst)}  {dst.name}")
+            img["files"][key] = dst.name
+        if "swu" in img["files"]:
+            img["swu_size"] = (stage / img["files"]["swu"]).stat().st_size
+        if src["tegraflash"].exists():
+            img["tegraflash_source"] = str(src["tegraflash"].resolve())
+        record["images"][kind] = img
+
+    (stage / "SHA256SUMS").write_text("\n".join(sums) + "\n")
+    record["status"] = "checked" if all_pass else "failed"
+    record["finished"] = datetime.datetime.now().isoformat(timespec="seconds")
+    write_json(stage / "build.json", record)
+    os.rename(stage, cfg.archive / build_id)
+
+    print(f"\nsloth-pipeline: {build_id}: Gate 1 {'PASS' if all_pass else 'FAIL'}"
+          f"  -> {cfg.archive / build_id}")
+    return 0 if all_pass else 1
+
+
+def cmd_check(args):
+    cfg = Config()
+    d = cfg.archive / args.id
+    bj = d / "build.json"
+    if not bj.is_file():
+        die(f"no build {args.id} in {cfg.archive}")
+    record = json.loads(bj.read_text())
+    if not record.get("images"):
+        die(f"{args.id} has no images to check (status {record.get('status')})")
+    all_pass = True
+    for kind, img in record["images"].items():
+        files = {k: d / v for k, v in img.get("files", {}).items()}
+        if not all(k in files and files[k].exists() for k in ("swu", "manifest", "testdata")):
+            results = [{"check": "archived files", "result": "FAIL",
+                        "detail": "swu, manifest or testdata.json missing"}]
+        else:
+            print(f"Gate 1: {img['image']}")
+            results = gate1(files, {
+                "id": record["id"], "kind": kind, "image": img["image"],
+                "machine": record["machine"], "keys_file": cfg.keys,
+                "prev": previous_size(cfg.archive, kind, record["id"]),
+            })
+        report = gate1_report(kind, img["image"], results)
+        print(report, end="")
+        (d / f"gate1-{kind}.txt").write_text(report)
+        img["gate1"] = {"verdict": gate1_verdict(results), "results": results}
+        # Gate 1 decides between checked and failed; a later status (from the
+        # board gates) is kept unless Gate 1 now fails.
+        if img["gate1"]["verdict"] == "fail":
+            img["status"] = "failed"
+        elif img.get("status") in (None, "failed", "checked"):
+            img["status"] = "checked"
+        all_pass &= img["gate1"]["verdict"] == "pass"
+    if any(img["status"] == "failed" for img in record["images"].values()):
+        record["status"] = "failed"
+    elif record["status"] in ("failed", "checked"):
+        record["status"] = "checked"
+    write_json(bj, record)
+    return 0 if all_pass else 1
+
+
+def cmd_list(args):
+    cfg = Config()
+    if not cfg.archive.is_dir():
+        die(f"archive {cfg.archive} does not exist")
+    builds = load_builds(cfg.archive)
+    incomplete = sorted(p.name for p in cfg.archive.glob(".incomplete-*"))
+    if not builds and not incomplete:
+        print(f"no builds in {cfg.archive}")
+        return 0
+    print(f"{'ID':<30} {'prod':<9} {'dev':<9} {'swu prod':>9} {'swu dev':>9}  meta-sloth")
+    for b in builds:
+        cols = []
+        for kind in ("prod", "dev"):
+            img = b.get("images", {}).get(kind)
+            if img:
+                size = img.get("swu_size")
+                cols.append((img["status"], human(size) if size else "-"))
+            else:
+                # A failed kas run has no images; "-" means not built.
+                cols.append(("failed" if b["status"] == "failed" else "-", "-"))
+        ms = b.get("repos", {}).get("meta-sloth", {})
+        note = ms.get("short", "?") + (" dirty" if ms.get("dirty") else "")
+        print(f"{b['id']:<30} {cols[0][0]:<9} {cols[1][0]:<9} "
+              f"{cols[0][1]:>9} {cols[1][1]:>9}  {note}")
+    for name in incomplete:
+        print(f"{name[len('.incomplete-'):]:<30} (incomplete: interrupted or still running)")
+    return 0
+
+
+def main():
+    p = argparse.ArgumentParser(
+        prog="sloth-pipeline",
+        description="Build, check (Gate 1) and archive Sloth builds.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="Settings come from the environment; see the header of this script.")
+    sub = p.add_subparsers(dest="cmd", required=True)
+    b = sub.add_parser("build", help="build, run Gate 1 and archive")
+    b.add_argument("--image", choices=("both", "prod", "dev"), default="both",
+                   help="which image(s) to build (default: both)")
+    b.add_argument("--tegraflash", action="store_true",
+                   help="also archive the tegraflash bundle (2.5 GB per image), "
+                        "for a release or a full reflash")
+    c = sub.add_parser("check", help="run Gate 1 again on an archived build")
+    c.add_argument("id")
+    sub.add_parser("list", help="list archived builds")
+    args = p.parse_args()
+    # Progress shows up at once, also when the output goes to a file or tee.
+    sys.stdout.reconfigure(line_buffering=True)
+    return {"build": cmd_build, "check": cmd_check, "list": cmd_list}[args.cmd](args)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

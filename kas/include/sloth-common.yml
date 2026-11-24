@@ -32,6 +32,9 @@ env:
   # File holding the root password hash (openssl passwd -6), outside this
   # public layer.  Unset: no root password.  See sloth-image.bb.
   SLOTH_ROOT_PASSWORD_HASH_FILE: null
+  # Build ID written to /etc/buildinfo (sloth-image.bb).  scripts/sloth-pipeline
+  # sets it for each build.  Unset, the image says "local".
+  SLOTH_BUILD_ID: null
 
 local_conf_header:
   sloth-images: |

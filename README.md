@@ -240,6 +240,62 @@ bitbake sloth-image-dev      # bench
 - **SD machine:** the SD card is written with `dd` from the Jetson itself
   while it runs JetPack from the NVMe (the SD slot is `mmcblk0` there).
 
+### Build pipeline
+
+[`scripts/sloth-pipeline`](scripts/sloth-pipeline) is phase A of the
+validation pipeline. Each build gets an ID, a board-free check (Gate 1) and
+its own folder in an archive, so any build can be found and installed again.
+The gates on the board (boot check, tests, reboot) are phase B.
+
+Run it on the build host, not inside the container. The container does not see
+the archive.
+
+```bash
+export SLOTH_ARCHIVE=/mnt/r/sloth/builds    # once, e.g. in ~/.bashrc
+~/yocto/meta-sloth/scripts/sloth-pipeline build                           # sloth-image and sloth-image-dev
+~/yocto/meta-sloth/scripts/sloth-pipeline build --image prod --tegraflash # also keep the flash bundle
+~/yocto/meta-sloth/scripts/sloth-pipeline list
+~/yocto/meta-sloth/scripts/sloth-pipeline check <ID>                      # Gate 1 again on an archived build
+```
+
+- **Build ID:** `YYYYMMDD-HHMM-<meta-sloth commit>`, plus `-dirty` when
+  meta-sloth or tegra-demo-distro has uncommitted changes. The ID goes into
+  the image as `SLOTH_BUILD_ID` in `/etc/buildinfo`, together with the commit
+  of every layer. Run `cat /etc/buildinfo` on the board to see which build it
+  runs. A dirty build is allowed, and its uncommitted changes are saved next to
+  it.
+- **Secrets:** the pipeline needs both files from
+  [Secrets for a build](#secrets-for-a-build). By default it takes them from
+  `~/yocto`.
+- **Archive:** each build gets `<ID>/` with these files:
+  - `build.json` (commits, status, Gate 1 results)
+  - `build.log`
+  - `gate1-*.txt`
+  - the `.swu`, manifest, SPDX and testdata of each image
+  - `SHA256SUMS`
+
+  A build with both images takes about 3.3 GB and about 6 minutes when only
+  meta-sloth changed. The tegraflash bundle (2.5 GB per image) is only kept
+  with `--tegraflash`. On WSL, keep the archive on a
+  Windows drive: the WSL disk does not shrink when old builds are deleted.
+  Every `.swu` holds root's password hash, so keep the archive private.
+
+Gate 1 reads the `.swu` itself, the same file the board will install:
+
+| Check | Fails when |
+|---|---|
+| `.swu` contents | the rootfs, capsule, ESP (L4TLauncher) or Lua script is missing |
+| sw-description | it is for another machine, or the slots are not `/dev/disk/sloth-boot` (F4), or a sha256 does not match |
+| build ID | `/etc/buildinfo` is missing, or it comes from another build |
+| root password | it is empty (only a warning when locked) |
+| root `authorized_keys` | it is missing (`sloth-image`), its mode is not 600, or it differs from the key file |
+| sshd policy | the hardening drop-in is missing (`sloth-image`) |
+| F2, F3 | `TNSPEC_MACHINE` is not `jetson-orin-nano-devkit-super`, or `TEGRA_MINIMAL_BOOT` is not `0` |
+| F4, F5 | `61-sloth-bootdisk.rules` or `rtl8822_setting.bin` is missing |
+| hwrevision | it does not name the machine, so the next OTA would be refused |
+| no bench tools | `gdb` or `strace` is in `sloth-image` |
+| `.swu` size | only a warning: it changed by more than 15% since the last build |
+
 ## Documentation
 
 This repository is public, so the working documentation lives in `docs/` on

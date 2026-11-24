@@ -205,6 +205,32 @@ SLOTH_OTA_PACKAGES = "swupdate swupdate-client tegra-redundant-boot"
 IMAGE_INSTALL:append = " ${@bb.utils.contains('BBFILE_COLLECTIONS', 'swupdate', d.getVar('SLOTH_OTA_PACKAGES'), '', d)}"
 
 # ---------------------------------------------------------------------------
+# Build identity (/etc/buildinfo)
+# ---------------------------------------------------------------------------
+# image-buildinfo (oe-core) writes /etc/buildinfo: the variables below, plus
+# the branch and commit of every layer ("-- modified" when the layer has
+# uncommitted changes).  scripts/sloth-pipeline gives each build an ID and
+# checks it in the .swu (Gate 1), so "which build is this?" has one answer,
+# on the host and on the board.  A build outside the pipeline says "local".
+inherit image-buildinfo
+# L4T_VERSION is only set in recipes that inherit l4t_version (that class is
+# just L4T_VERSION ?= "<version>"); without it /etc/buildinfo shows it empty.
+inherit l4t_version
+SLOTH_BUILD_ID ??= "local"
+IMAGE_BUILDINFO_VARS:append = " SLOTH_BUILD_ID MACHINE IMAGE_BASENAME L4T_VERSION"
+
+# image-buildinfo looks these variables up by name from a list, so bitbake
+# does not count them as inputs of its "buildinfo" function (run in do_image).
+# Without this line a new build ID does not re-run do_image, and the image
+# keeps the previous ID.  The cost: each pipeline build re-runs do_image and
+# the image types after it (tar.gz, tegraflash, .swu).
+# On the function, not on do_image: image.bbclass appends IMAGE_TYPEDEP:<type>
+# to do_image[vardeps] without a separating space, so a name added there
+# fuses with one of those, in a different order on each parse ("basehash
+# value changed ... metadata is not deterministic", 2026-11-23).
+buildinfo[vardeps] += "SLOTH_BUILD_ID"
+
+# ---------------------------------------------------------------------------
 # Rescue system in the recovery partition
 # ---------------------------------------------------------------------------
 # On machines that set SLOTH_RESCUE_IMAGE (sloth-orin-nano-nvme.conf), the
